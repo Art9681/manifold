@@ -1,0 +1,213 @@
+<!-- model.html -->
+{{define "model"}}
+<div x-data id="model-container"
+  class="content-wrapper h-100 d-flex flex-column rounded-start-2 border-start border-secondary-subtle" hx-trigger="">
+  <div class="content h-100">
+    <div class="container-fluid h-100">
+      <div class="row h-100">
+        <div class="col-12 h-100">
+          <div class="panel h-100 d-flex flex-column fade-it" style="background-color: var(--et-galactic-bg);">
+            <div class="panel-header px-4 py-3 border-bottom">
+              <h4 class="mb-3 text-center">Assistants</h4>
+              <!-- Avatar -->
+              <div class="text-center mb-3">
+                <img id="assistant-avatar" src="/img/et_female.jpg" alt="Assistant Avatar" class="rounded-circle"
+                  style="width: 100px; height: 100px;">
+              </div>
+              <!-- Roles Dropdown -->
+              <div class="mb-3">
+                <label for="role-select" class="form-label">Assistant Role</label>
+                <select id="role-select" class="form-select" aria-label="Select Assistant Role">
+                  <option selected disabled>Select Role</option>
+                  <template x-for="role in $store.dataStore.roles">
+                    <option :value="role.Name" x-text="role.Name"></option>
+                  </template>
+                </select>
+              </div>
+
+              <!-- Model Dropdown -->
+              <select id="model-select" class="form-select" aria-label="Select Language Model">
+                <option selected disabled>Language Models</option>
+                <template x-for="model in $store.dataStore.data.LanguageModels">
+                  <option :value="model.Name" x-text="model.Name"></option>
+                </template>
+              </select>
+            </div>
+            <div id="model-info-container" class="panel-body flex-grow-1 overflow-auto px-4 py-3">
+              <!-- Model info will be dynamically inserted here -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.getElementById('model-select').addEventListener('change', function () {
+    selectModel(this.value);
+  });
+
+  document.getElementById('role-select').addEventListener('change', function () {
+    setRole(this.value);
+  });
+
+  async function selectModel(modelName) {
+    try {
+      const modelData = Alpine.store('dataStore').data.LanguageModels.find(model => model.Name === modelName);
+
+      if (modelData) {
+        const modelInfoContainer = document.getElementById('model-info-container');
+
+        if (!modelData.Downloaded && !['openai-gpt-4o', 'google-gemini-1.5', 'anthropic-claude-3.5-sonnet'].includes(modelData.Name)) {
+          modelInfoContainer.innerHTML = `
+            <div class="text-center">
+              <p><a href="${modelData.GGUFInfo}" target="_blank" class="btn btn-secondary bg-gradient">Model Homepage</a></p>
+              <div id="model-download">
+                <button id="model-download-btn" class="btn btn-primary" onclick="downloadModel('${modelData.Name}')">Download</button>
+              </div>
+            </div>
+            <div id="progress-download" class="progress mt-3 d-none" style="height: 25px;">
+              <div class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+            </div>
+          `;
+        } else {
+          modelInfoContainer.innerHTML = `
+            <div class="text-center mb-4">
+              <a href="${modelData.GGUFInfo}" target="_blank" >Model Homepage</a>
+            </div>
+            <div class="form-group">
+              <label for="ctx-size-slider" class="form-label">Context Size: <span id="ctx-size-value">${modelData.Ctx}</span></label>
+              <input type="range" class="form-range custom-range" min="2048" max="128000" step="2048" value="${modelData.Ctx}" id="ctx-size-slider">
+            </div>
+            <div class="form-group">
+              <label for="temp-slider" class="form-label">Temperature: <span id="temp-value">${modelData.Temperature}</span></label>
+              <input type="range" class="form-range custom-range" min="0.0" max="0.9" step="0.1" value="${modelData.Temperature}" id="temp-slider">
+            </div>
+            <div class="form-group">
+              <label for="topp-slider" class="form-label">TopP: <span id="topp-value">${modelData.TopP}</span></label>
+              <input type="range" class="form-range custom-range" min="0.0" max="1.0" step="0.1" value="${modelData.TopP}" id="topp-slider">
+            </div>
+            <div class="form-group">
+              <label for="topk-slider" class="form-label">TopK: <span id="topk-value">${modelData.TopK}</span></label>
+              <input type="range" class="form-range custom-range" min="5" max="100" step="5" value="${modelData.TopK}" id="topk-slider">
+            </div>
+            <div class="form-group">
+              <label for="repeat-penalty-slider" class="form-label">Repetition Penalty: <span id="repeat-penalty-value">${modelData.RepetitionPenalty}</span></label>
+              <input type="range" class="form-range custom-range" min="0.0" max="50.0" step="0.1" value="${modelData.RepetitionPenalty}" id="repeat-penalty-slider">
+            </div>
+            <button id="saveModelParamsBtn" class="btn btn-secondary btn-block bg-gradient mt-3 w-100">Save</button>
+          `;
+
+          // Add event listeners to update the displayed value as the slider is moved
+          ['ctx-size', 'temp', 'topp', 'topk', 'repeat-penalty'].forEach(param => {
+            document.getElementById(`${param}-slider`).addEventListener('input', function () {
+              document.getElementById(`${param}-value`).textContent = this.value;
+            });
+          });
+
+          // Add event listener to save the model parameters
+          //document.getElementById('saveModelParamsBtn').addEventListener('click', saveModelParams);
+        }
+      } else {
+        console.error('Error fetching model data');
+      }
+    } catch (error) {
+      console.error('Error fetching model data:', error);
+    }
+  }
+
+  // async function saveModelParams() {
+  //   try {
+  //     const modelName = document.getElementById('model-select').value;
+  //     const ctxSize = parseInt(document.getElementById('ctx-size-slider').value);
+  //     const temp = parseFloat(document.getElementById('temp-slider').value);
+  //     const top_p = parseFloat(document.getElementById('topp-slider').value);
+  //     const top_k = parseInt(document.getElementById('topk-slider').value);
+  //     const repeat_penalty = parseFloat(document.getElementById('repeat-penalty-slider').value);
+
+  //     const modelParams = {
+  //       Name: modelName,
+  //       Options: {
+  //         ctx_size: ctxSize,
+  //         temp: temp,
+  //         top_p: top_p,
+  //         top_k: top_k,
+  //         repeat_penalty: repeat_penalty,
+  //       },
+  //     };
+
+  //     const response = await fetch('/v1/models/set', {
+  //       method: 'POST',
+  //       headers: {
+  //         'Content-Type': 'application/json'
+  //       },
+  //       body: JSON.stringify(modelParams),
+  //     });
+
+  //     if (response.ok) {
+  //       console.log('Settings saved successfully');
+  //       // You can add a visual feedback here, like a toast notification
+  //     } else {
+  //       console.error('Error saving settings');
+  //     }
+  //   } catch (error) {
+  //     console.error('Error sending request:', error);
+  //   }
+  // }
+
+  // function downloadModel(modelName) {
+  //   const progressContainer = document.getElementById('progress-download');
+  //   const downloadButton = document.getElementById('model-download-btn');
+
+  //   downloadButton.classList.add('d-none');
+  //   progressContainer.classList.remove('d-none');
+
+  //   console.log("Downloading model: ", modelName);
+
+  //   fetch(`/v1/models/download?model=${modelName}`, {
+  //     method: 'POST',
+  //     headers: {
+  //       'Content-Type': 'application/json',
+  //     },
+  //     body: JSON.stringify({ modelName }),
+  //   })
+  //     .then(response => {
+  //       if (!response.ok) {
+  //         throw new Error('Failed to download model');
+  //       }
+  //     })
+  //     .catch(error => {
+  //       console.error('Error:', error);
+  //       downloadButton.classList.remove('d-none');
+  //       progressContainer.classList.add('d-none');
+  //     });
+  // }
+
+  function setRole(role) {
+    // Set the role from the alpine store
+    Alpine.store('dataStore').selectedRole = role;
+    updateAvatar(role);
+
+    // Log the current state of the dataStore to the console
+    console.log('dataStore:', Alpine.store('dataStore'));
+  }
+
+  function updateAvatar(role) {
+    const avatarElement = document.getElementById('assistant-avatar');
+    // Define avatar paths for each role (you'll need to create these images)
+    const avatarPaths = {
+      chat: '/img/et_female.jpg',
+      summary: '/img/et_male.jpg',
+      cot: '/img/et_female.jpg',
+      cot_advanced: '/img/et_male.jpg',
+      software_dev: '/img/et_female.jpg',
+      code_review: '/img/et_male.jpg',
+      image_bot: '/img/et_female.jpg'
+    };
+
+    // Update the avatar src
+    avatarElement.src = avatarPaths[role] || '/img/et_female.jpg';
+  }
+</script>
+{{end}}

@@ -1,0 +1,96 @@
+#cb-header {
+    position: relative;
+    height: 50px;
+    filter: blur(5px); /* Apply blur */
+}
+
+#hgradient {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 50px;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0));
+    background-size: 200% 100%; /* Adjust the length of the gradient */
+    background-position: 0 50%; /* Start the gradient at 50% height */
+}
+
+
+.circle {
+    position: absolute;
+    width: 12px; /* Half the width of the box */
+    height: 12px; /* Half the height of the box */
+    background-color: black;
+    border-radius: 50%; /* Makes the shape a circle */
+    top: 50%; /* Center vertically */
+    left: 50%; /* Center horizontally */
+    transform: translate(-50%, -50%); /* Offset the position to truly center */
+    z-index: 1; /* Ensure it is behind the panels of the box */
+}
+
+.box-container {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.box {
+    width: 20px;
+    height: 20px;
+    position: relative;
+    transform-style: preserve-3d;
+    transition: transform 0.5s ease;
+    transform-origin: center;
+}
+
+.box .panel {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background: var(--bg-color, #FFF); /* Default to white if variable not set */
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px;
+}
+
+.box .panel::before,
+.box .panel::after {
+    content: '';
+    display: block;
+    width: 12px; /* Diameter = 2 * radius */
+    height: 12px; /* Diameter = 2 * radius */
+    border-radius: 50%; /* Makes the shape a circle */
+    position: absolute; /* Positions the pseudo-elements absolutely within their parent */
+}
+
+.box .panel::before {
+    background: black;
+    top: 0; /* Aligns the circle to the top */
+    left: 0; /* Aligns the circle to the left */
+}
+
+.box .panel::after {
+    background: white;
+    bottom: 0; /* Aligns the circle to the bottom */
+    right: 0; /* Aligns the circle to the right */
+}
+
+
+.box .panel.front { transform: translateZ(10px); }
+.box .panel.back { transform: rotateY(180deg) translateZ(10px); }
+.box .panel.top { transform: rotateX(90deg) translateZ(10px); }
+.box .panel.bottom { transform: rotateX(-90deg) translateZ(10px); }
+.box .panel.left { transform: rotateY(-90deg) translateZ(10px); }
+.box .panel.right { transform: rotateY(90deg) translateZ(10px); }
+
+@keyframes spin {
+    from { transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg); }
+    to { transform: rotateX(360deg) rotateY(360deg) rotateZ(360deg); }
+}
+
+.box:hover {
+    animation: spin 2s linear infinite;
+}

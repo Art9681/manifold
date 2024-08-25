@@ -1,0 +1,78 @@
+{{define "header"}}
+<div id="cb-header" class="position-fixed fixed-top dark-blur mt-0" hx-preserve>
+  <div id="hgradient"></div>
+  <div class="box-container">
+    <div class="circle"></div>
+    <div class="box">
+      <div class="panel front" style="--bg-color: var(--et-purple);"></div>
+      <div class="panel back" style="--bg-color: var(--et-green);"></div>
+      <div class="panel top" style="--bg-color: var(--et-blue);"></div>
+      <div class="panel bottom" style="--bg-color: var(--et-red);"></div>
+      <div class="panel left" style="--bg-color: var(--et-yellow);"></div>
+      <div class="panel right" style="--bg-color: var(--et-light);"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Get the elements
+  const boxcontainer = document.querySelector(".box-container");
+  const box = document.querySelector(".box");
+
+  var rotationInterval = null;
+  let r = 45;
+
+  function getRandomRotation() {
+    r += -90;
+    const rotationX = r;
+    const rotationY = r;
+    const rotationZ = -180;
+    return `rotateX(${rotationX}deg) rotateY(${rotationY}deg) rotateZ(${rotationZ}deg)`;
+  }
+
+  function chatRotation() {
+    r += 10;
+    const rotationX = r;
+    const rotationY = r;
+    const rotationZ = 0;
+    return `rotateX(${rotationX}deg) rotateY(${rotationY}deg) rotateZ(${rotationZ}deg)`;
+  }
+
+  // Add a click event listener to rotate the box on click
+  boxcontainer.addEventListener("click", function () {
+    const newRotation = getRandomRotation();
+    box.style.transition = "transform 0.5s";
+    box.style.transform = newRotation;
+    // chatbox.classList.toggle("expand"); // This line references an undefined "chatbox" which is not present in the provided code
+  });
+
+  box.addEventListener("mouseover", function () {
+    // Check if event listener is already added
+    if (box.hasAttribute("data-event-added")) {
+      return;
+    }
+
+    // Only spin the box once when the mouse is over it
+    box.setAttribute("data-event-added", true);
+
+    // Rotate the box
+    const newRotation = getRandomRotation();
+    box.style.transition = "transform 0.5s ease";
+    box.style.transform = newRotation;
+
+    // Remove the event listener after the animation is done
+    setTimeout(function () {
+      box.removeAttribute("data-event-added");
+    }, 1000);
+  });
+
+  setInterval(function () {
+    const transform = window.getComputedStyle(box).getPropertyValue("transform");
+  }, 1000);
+
+  // Rotate the box on page load
+  const newRotation = getRandomRotation();
+  box.style.transition = "transform 0.5s ease";
+  box.style.transform = newRotation;
+</script>
+{{end}}
