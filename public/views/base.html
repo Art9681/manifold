@@ -61,7 +61,7 @@
           {{template "tools" .}}
         </div>
 
-        <div id="chat-view" class="col-6">
+        <div id="chat-view" class="col-6" hx-ext="ws" ws-connect="/ws">
           <div id="chat" class="row chat-container fs-5"></div>
         </div>
 
@@ -117,8 +117,8 @@
                 <!-- Clear textarea after submit -->
 
                 <button id="send" class="btn btn-secondary btn-prompt-send bg-gradient" type="button"
-                  hx-post="/v1/chat/submit" hx-trigger="click" hx-target="#chat" hx-swap="beforeend"
-                  hx-on::after-request="document.getElementById('message').value='';">
+                  hx-post="/v1/chat/submit" hx-target="#chat" hx-swap="beforeend"
+                  hx-on::after-request="document.getElementById('message').value=''; textarea.style.height = 'auto'; textarea.style.height = `${Math.min(this.scrollHeight, this.clientHeight * 1)}px`;">
                   <div id="send-icon">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
                       <path fill="currentColor" fill-rule="evenodd"
@@ -359,60 +359,6 @@
     }
 
     // htmx.logAll();
-  </script>
-<script>
-  function chatComponent() {
-      return {
-          responseParts: [],
-          responseContent: '',
-          async fetchResponse() {
-              try {
-                  const response = await fetch('/v1/chat/submit', {
-                      method: 'POST',
-                      headers: {
-                          'Content-Type': 'application/json',
-                      },
-                      body: JSON.stringify({ userprompt: this.$refs.message.value }),
-                  });
-  
-                  const reader = response.body.getReader();
-                  const decoder = new TextDecoder('utf-8');
-                  let done = false;
-                  let accumulatedResponse = '';
-  
-                  while (!done) {
-                      const { value, done: readerDone } = await reader.read();
-                      done = readerDone;
-  
-                      accumulatedResponse += decoder.decode(value, { stream: !readerDone });
-  
-                      // Process each complete JSON object in the response
-                      let jsonChunks = accumulatedResponse.split('\n').filter(chunk => chunk.trim() !== '');
-  
-                      for (let chunk of jsonChunks) {
-                          try {
-                              const jsonResponse = JSON.parse(chunk);
-                              if (jsonResponse.choices && jsonResponse.choices[0].delta && jsonResponse.choices[0].delta.content) {
-                                  const content = jsonResponse.choices[0].delta.content;
-                                  this.responseParts.push(content);
-                                  this.responseContent += content;
-                              }
-                          } catch (error) {
-                              // Handle any JSON parse errors, usually caused by incomplete chunks
-                              console.error('JSON Parse Error:', error);
-                          }
-                      }
-                      
-                      // Clear the accumulated response for the next batch
-                      accumulatedResponse = '';
-                  }
-              } catch (error) {
-                  console.error('Error fetching response:', error);
-              }
-          }
-      };
-  }
-  
   </script>
 </body>
 

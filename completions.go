@@ -256,81 +256,83 @@ func IncrementTurn() int {
 }
 
 // handleChatSubmit handles the submission of chat messages.
-// func handleChatSubmit(c echo.Context) error {
-// 	userPrompt := c.FormValue("userprompt")
-// 	role := c.FormValue("role")
-
-// 	// Get the role instructions
-// 	// This is a hack to get the role instructions
-// 	// This needs to be set by the frontend dropdown
-// 	//config := c.Get("config").(*Config)
-// 	//roleInstructions := config.CompletionsRole[0].Instructions
-
-// 	// Set the chat role
-// 	chatRole := &CompletionsRole{
-// 		Name:         role,
-// 		Instructions: "You are a helpful AI assistant.",
-// 	}
-
-// 	turnID := IncrementTurn()
-
-// 	// render map into echo chat.html template
-// 	return c.Render(http.StatusOK, "chat", echo.Map{
-// 		"username":  "User",
-// 		"message":   userPrompt,
-// 		"assistant": "Assistant",
-// 		"model":     "Local",
-// 		"turnID":    turnID,
-// 		"wsRoute":   "",
-// 		"hosts":     "http://192.168.0.110:32182", // Do not hard code this
-// 		"role":      chatRole.GetInstructions(),
-// 	})
-// }
-
-// handleChatSubmit handles the submission of chat messages.
 func handleChatSubmit(c echo.Context) error {
 	userPrompt := c.FormValue("userprompt")
+	role := c.FormValue("role")
 
-	// Create a new CompletionRequest using the chat message
-	payload := &CompletionRequest{
-		Messages:    []Message{{Role: "user", Content: userPrompt}},
-		Temperature: 0.3,
-		MaxTokens:   128000,
-		Stream:      true,
+	// Get the role instructions
+	// This is a hack to get the role instructions
+	// This needs to be set by the frontend dropdown
+	//config := c.Get("config").(*Config)
+	//roleInstructions := config.CompletionsRole[0].Instructions
+
+	// Set the chat role
+	chatRole := &CompletionsRole{
+		Name:         role,
+		Instructions: "You are a helpful AI assistant.",
 	}
 
-	// Stream the JSON response back to the client
-	c.Response().Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	c.Response().WriteHeader(http.StatusOK)
+	// Stream the completion response to the client
 
-	resp, err := SendRequest(completionsEndpoint, payload)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	turnID := IncrementTurn()
 
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "data: ") {
-			jsonStr := line[6:] // Strip the "data: " prefix
-
-			// Stream the data directly to the response
-			if _, err := c.Response().Write([]byte(jsonStr + "\n")); err != nil {
-				return err
-			}
-
-			// Flush the buffer to ensure the data is sent immediately
-			c.Response().Flush()
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-
-	return nil
+	// render map into echo chat.html template
+	return c.Render(http.StatusOK, "chat", echo.Map{
+		"username":  "User",
+		"message":   userPrompt,
+		"assistant": "Assistant",
+		"model":     "Local",
+		"turnID":    turnID,
+		"wsRoute":   "",
+		"hosts":     "http://192.168.0.110:32182", // Do not hard code this
+		"role":      chatRole.GetInstructions(),
+	})
 }
+
+// handleChatSubmit handles the submission of chat messages.
+// func handleChatSubmit(c echo.Context) error {
+// 	userPrompt := c.FormValue("userprompt")
+
+// 	// Create a new CompletionRequest using the chat message
+// 	payload := &CompletionRequest{
+// 		Messages:    []Message{{Role: "user", Content: userPrompt}},
+// 		Temperature: 0.3,
+// 		MaxTokens:   128000,
+// 		Stream:      true,
+// 	}
+
+// 	// Stream the JSON response back to the client
+// 	c.Response().Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+// 	c.Response().WriteHeader(http.StatusOK)
+
+// 	resp, err := SendRequest(completionsEndpoint, payload)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	defer resp.Body.Close()
+
+// 	scanner := bufio.NewScanner(resp.Body)
+// 	for scanner.Scan() {
+// 		line := scanner.Text()
+// 		if strings.HasPrefix(line, "data: ") {
+// 			jsonStr := line[6:] // Strip the "data: " prefix
+
+// 			// Stream the data directly to the response
+// 			if _, err := c.Response().Write([]byte(jsonStr + "\n")); err != nil {
+// 				return err
+// 			}
+
+// 			// Flush the buffer to ensure the data is sent immediately
+// 			c.Response().Flush()
+// 		}
+// 	}
+
+// 	if err := scanner.Err(); err != nil {
+// 		return err
+// 	}
+
+// 	return nil
+// }
 
 // handleSetChatRole handles the setting of the chat role.
 func handleSetChatRole(c echo.Context, config *Config) error {
