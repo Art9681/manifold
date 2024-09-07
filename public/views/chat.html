@@ -15,7 +15,9 @@
           <span class="badge my-3 mx-1 bg-gradient"
             style="background-color: var(--et-galactic-accent);">{{.username}}</span>
         </div>
-        <form id="hidden-form-{{.turnID}}" style="display:none;" hx-trigger="load" ws-send>
+        <!-- The trigger delay for the websocket is necessary to prevent duplicate prompt submissions -->
+        <!-- https://github.com/bigskysoftware/htmx/issues/2141 -->
+        <form id="hidden-form-{{.turnID}}" style="display:none;" hx-trigger="load delay:1ms" ws-send>
           <input type="hidden" name="model" value="{{.model}}">
           <input type="hidden" name="chat_message" value="{{.message}}">
         </form>

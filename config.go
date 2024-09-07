@@ -10,15 +10,18 @@ import (
 )
 
 type ServiceConfig struct {
-	Name    string   `yaml:"name"`
-	Host    string   `yaml:"host"`
-	Port    int      `yaml:"port"`
-	Command string   `yaml:"command"`
-	Args    []string `yaml:"args,omitempty"`
+	Name      string   `yaml:"name"`
+	Host      string   `yaml:"host"`
+	Port      int      `yaml:"port"`
+	Command   string   `yaml:"command"`
+	GPULayers string   `yaml:"gpu_layers,omitempty"`
+	Args      []string `yaml:"args,omitempty"`
+	Model     string   `yaml:"model,omitempty"`
 }
 
 type Config struct {
 	DataPath       string            `yaml:"data_path,omitempty"`
+	LLMBackend     string            `yaml:"llm_backend"`
 	Services       []ServiceConfig   `yaml:"services"`
 	Tools          []YAMLTool        `yaml:"tools"`
 	LanguageModels []ModelParams     `yaml:"language_models"`

@@ -124,7 +124,7 @@ func GetSystemTemplate(userPrompt string) ChatPromptTemplate {
 	template := NewChatPromptTemplate([]Message{
 		{
 			Role:    "system",
-			Content: "You are a helpful AI assistant.",
+			Content: "You are a world-class AI system, capable of complex reasoning and reflection. Reason through the query inside <thinking> tags, and then provide your final response inside <output> tags. If you detect that you made a mistake in your reasoning at any point, correct yourself inside <reflection> tags.",
 		},
 		{
 			Role:    "user",
@@ -166,7 +166,7 @@ func (cpt *ChatPromptTemplate) FormatMessages(vars map[string]string) []Message 
 
 // SendRequest sends a request to the OpenAI API and decodes the response.
 func SendRequest(endpoint string, payload *CompletionRequest) (*http.Response, error) {
-	// Convert the layload to json
+	// Convert the payload to json
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -201,27 +201,16 @@ func StreamCompletionToWebSocket(c *websocket.Conn, chatID int, model string, pa
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
+
 		if strings.HasPrefix(line, "data: ") {
 			jsonStr := line[6:] // Strip the "data: " prefix
 			var data struct {
 				Choices []struct {
-					Delta struct {
+					FinishReason string `json:"finish_reason"`
+					Delta        struct {
 						Content string `json:"content"`
 					} `json:"delta"`
 				} `json:"choices"`
-				FinishReason string `json:"finish_reason"`
-			}
-
-			if strings.Contains(jsonStr, "[DONE]") {
-				if err := c.WriteMessage(websocket.TextMessage, []byte("EOS")); err != nil {
-					return err
-				}
-
-				// Close the socket with a message
-				// c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				// c.Close()
-
-				return c.Close()
 			}
 
 			if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
@@ -229,6 +218,14 @@ func StreamCompletionToWebSocket(c *websocket.Conn, chatID int, model string, pa
 			}
 
 			for _, choice := range data.Choices {
+				// If the finish reason is "stop", then stop streaming
+				if choice.FinishReason == "stop" {
+					// Clear all buffers and prompts
+					responseBuffer.Reset()
+
+					return fmt.Errorf("%s", responseBuffer.String())
+				}
+
 				responseBuffer.WriteString(choice.Delta.Content)
 			}
 

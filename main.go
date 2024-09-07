@@ -73,8 +73,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println(config)
-
 	// Create a new Echo instance
 	e := echo.New()
 	e.Use(middleware.Logger())
@@ -105,37 +103,18 @@ func main() {
 	completionsCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// If the OS is darwin, start the MLX service
-	if host.GetOS() == "darwin" {
-		// Get the MLX service configuration
-		mlxConfig, err := config.GetMLXServiceConfig()
-		if err != nil {
-			e.Logger.Fatal(err)
-		}
+	var llmService ServiceConfig
+	if config.LLMBackend == "gguf" {
+		llmService = config.Services[1]
+	} else if config.LLMBackend == "mlx" {
+		llmService = config.Services[2]
+	}
 
-		// Create an instance of ExternalService for MLX
-		// mlxModel := fmt.Sprintf("%s/models/mlx-models/%s", config.DataPath, "Mistral-Large-Instruct-2407-4bit")
-		// mlxModel := "/Users/arturoaquino/.eternal-v1/models/mlx-models/Meta-Llama-3.1-70B-Instruct-4bit"
-		mlxModel := "/Users/arturoaquino/.eternal-v1/models/mlx-models/Mistral-Nemo-Instruct-2407-8bit"
-		mlxServiceConfig := ServiceConfig{
-			Name:    "mlx_lm.server",
-			Command: "mlx_lm.server",
-			Args: []string{
-				"--model", mlxModel,
-				"--port", fmt.Sprintf("%d", mlxConfig.Port),
-				"--host", mlxConfig.Host,
-			},
-		}
+	completionsService = NewExternalService(llmService, true)
 
-		// Append additional arguments from the config
-		mlxServiceConfig.Args = append(mlxServiceConfig.Args, mlxConfig.Args...)
-
-		completionsService = NewExternalService(mlxServiceConfig, verbose)
-
-		// Start the MLX service
-		if err := completionsService.Start(completionsCtx); err != nil {
-			e.Logger.Fatal(err)
-		}
+	// Start the completions service
+	if err := completionsService.Start(completionsCtx); err != nil {
+		e.Logger.Fatal(err)
 	}
 
 	// Set up graceful shutdown

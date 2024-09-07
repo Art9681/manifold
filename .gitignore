@@ -1,6 +1,8 @@
+*.log
 repoconcat/main_test.go
 repoconcat/main.go
 repoconcat/manifold_repo.txt
 repoconcat/README.md
 config.yml
 .DS_Store
+TODO

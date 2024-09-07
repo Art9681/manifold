@@ -50,6 +50,10 @@ func handleWebSocketConnection(c echo.Context) error {
 		if err != nil {
 			return err
 		}
+
+		// Clear the completion request messages so when a new one is submitted it sends the correct one
+		payload.Messages = nil
+
 		_, _, err := ws.ReadMessage()
 		if err != nil {
 			return err
