@@ -23,55 +23,9 @@ type Config struct {
 	DataPath       string            `yaml:"data_path,omitempty"`
 	LLMBackend     string            `yaml:"llm_backend"`
 	Services       []ServiceConfig   `yaml:"services"`
-	Tools          []YAMLTool        `yaml:"tools"`
+	Tools          []ToolMetadata    `yaml:"tools"`
 	LanguageModels []ModelParams     `yaml:"language_models"`
 	Roles          []CompletionsRole `yaml:"roles"`
-}
-
-type Tool struct {
-	ID         uint   `gorm:"primaryKey"`
-	Name       string `gorm:"unique;not null"`
-	Enabled    bool
-	Parameters []ToolParam `gorm:"foreignKey:ToolID"`
-}
-
-type ToolParam struct {
-	ID         uint `gorm:"primaryKey"`
-	ToolID     uint
-	ParamName  string
-	ParamValue string
-}
-
-type YAMLTool struct {
-	Name       string                 `yaml:"name"`
-	Enabled    bool                   `yaml:"enabled"`
-	Parameters map[string]interface{} `yaml:",inline"`
-}
-
-type WebGetTool struct {
-	Tool
-	TopN int `yaml:"top_n"`
-}
-
-type WebSearchTool struct {
-	Tool
-	Endpoint string `yaml:"endpoint,omitempty"`
-	TopN     int    `yaml:"top_n"`
-}
-
-type ImgGenConfig struct {
-	Workflow string
-	Width    int
-	Height   int
-}
-
-type MemoryTool struct {
-	Tool
-	TopN int `yaml:"top_n"`
-}
-
-type TeamTool struct {
-	Tool
 }
 
 func LoadConfig(filename string) (*Config, error) {

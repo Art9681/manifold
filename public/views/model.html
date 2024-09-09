@@ -185,9 +185,18 @@
   // }
 
   function setRole(role) {
+    const selectedRole = role;
     // Set the role from the alpine store
     Alpine.store('dataStore').selectedRole = role;
     updateAvatar(role);
+
+    var roleInstructions = Alpine.store('dataStore').roles.find(role => role.Name === selectedRole)?.Instructions;
+
+    // Assign instructions to Alpine.js variable
+    if (roleInstructions) {
+      Alpine.store('dataStore').roleInstructions = roleInstructions;
+      console.log('roleInstructions:', roleInstructions);
+    }
 
     // Log the current state of the dataStore to the console
     console.log('dataStore:', Alpine.store('dataStore'));

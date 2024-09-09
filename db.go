@@ -99,6 +99,22 @@ type URLTracking struct {
 	URL string `json:"url"`
 }
 
+// ToolMetadata stores metadata about the tools (name, enabled, and params)
+type ToolMetadata struct {
+	ID      uint   `gorm:"primaryKey"`
+	Name    string `gorm:"index"`
+	Enabled bool
+	Params  []ToolParam `gorm:"foreignKey:ToolID"`
+}
+
+// ToolParam stores parameters for each tool
+type ToolParam struct {
+	ID         uint   `gorm:"primaryKey"`
+	ToolID     uint   `gorm:"index"`
+	ParamName  string `gorm:"index"`
+	ParamValue string
+}
+
 func NewSQLiteDB(dataPath string) (*SQLiteDB, error) {
 	dbPath := filepath.Join(dataPath, "eternaldata.db")
 
@@ -153,80 +169,6 @@ func (sqldb *SQLiteDB) UpdateDownloadedByName(name string, downloaded bool) (*Mo
 
 func (sqldb *SQLiteDB) Delete(id uint, model interface{}) error {
 	return sqldb.db.Delete(model, id).Error
-}
-
-func (sqldb *SQLiteDB) CreateTool(tool Tool) error {
-	return sqldb.db.Create(&tool).Error
-}
-
-func (sqldb *SQLiteDB) CreateToolParam(toolID uint, paramName string, paramValue string) error {
-	toolParam := ToolParam{
-		ToolID:     toolID,
-		ParamName:  paramName,
-		ParamValue: paramValue,
-	}
-	return sqldb.db.Create(&toolParam).Error
-}
-
-func (sqldb *SQLiteDB) GetToolParams(toolID uint) ([]ToolParam, error) {
-	var toolParams []ToolParam
-	err := sqldb.db.Where("tool_id =?", toolID).Find(&toolParams).Error
-	return toolParams, err
-}
-
-func (sqldb *SQLiteDB) UpdateToolByName(name string, enabled bool) error {
-	return sqldb.db.Model(&Tool{}).Where("name = ?", name).Updates(Tool{Enabled: enabled}).Error
-}
-
-func (sqldb *SQLiteDB) UpdateToolParam(toolID uint, paramName string, paramValue string) error {
-	return sqldb.db.Model(&ToolParam{}).Where("tool_id =? AND param_name =?", toolID, paramName).Updates(ToolParam{ParamValue: paramValue}).Error
-}
-
-func (sqldb *SQLiteDB) DeleteToolParam(toolID uint, paramName string) error {
-	return sqldb.db.Where("tool_id =? AND param_name =?", toolID, paramName).Delete(&ToolParam{}).Error
-}
-
-func loadToolsToDB(db *SQLiteDB, yamlTools []YAMLTool) error {
-	for _, ytool := range yamlTools {
-		var existingTool Tool
-		err := db.First(ytool.Name, &existingTool)
-
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				tool := Tool{
-					Name:    ytool.Name,
-					Enabled: ytool.Enabled,
-				}
-				err = db.CreateTool(tool)
-				if err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
-		} else {
-			// Optionally update the existing tool if needed
-			err = db.UpdateToolByName(ytool.Name, ytool.Enabled)
-			if err != nil {
-				return err
-			}
-		}
-
-		for key, value := range ytool.Parameters {
-			param := ToolParam{
-				ToolID:     existingTool.ID,
-				ParamName:  key,
-				ParamValue: fmt.Sprintf("%v", value),
-			}
-			err = db.CreateToolParam(existingTool.ID, param.ParamName, param.ParamValue)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	log.Println("Tools data loaded to database")
-	return nil
 }
 
 func loadCompletionsRolesToDB(db *SQLiteDB, roles []CompletionsRole) error {
@@ -442,26 +384,117 @@ func checkDownloadedModels(db *SQLiteDB, config *Config) (*Config, error) {
 	return config, nil
 }
 
-func (sqldb *SQLiteDB) GetToolByName(name string) (*Tool, error) {
-	var tool Tool
-	err := sqldb.db.Preload("Parameters").Where("name = ?", name).First(&tool).Error
+// CreateToolMetadata adds a new tool to the database
+func (sqldb *SQLiteDB) CreateToolMetadata(tool ToolMetadata) error {
+	if err := sqldb.db.Create(&tool).Error; err != nil {
+		return fmt.Errorf("failed to create tool metadata: %v", err)
+	}
+	return nil
+}
+
+// CreateToolParam adds a parameter to a tool
+func (sqldb *SQLiteDB) CreateToolParam(toolID uint, paramName, paramValue string) error {
+	toolParam := ToolParam{
+		ToolID:     toolID,
+		ParamName:  paramName,
+		ParamValue: paramValue,
+	}
+	return sqldb.db.Create(&toolParam).Error
+}
+
+// GetToolMetadataByName retrieves a tool by its name along with its parameters
+func (sqldb *SQLiteDB) GetToolMetadataByName(name string) (*ToolMetadata, error) {
+	var tool ToolMetadata
+	err := sqldb.db.Preload("Params").Where("name = ?", name).First(&tool).Error
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to find tool %s: %v", name, err)
 	}
 	return &tool, nil
 }
 
-func invokeToolByName(db *SQLiteDB, toolName string) Tool {
-	tool, err := db.GetToolByName(toolName)
+// UpdateToolMetadataByName updates a tool's enabled status by name
+func (sqldb *SQLiteDB) UpdateToolMetadataByName(name string, enabled bool) error {
+	return sqldb.db.Model(&ToolMetadata{}).Where("name = ?", name).Update("enabled", enabled).Error
+}
+
+// UpdateToolParam updates a tool parameter by tool ID and parameter name
+func (sqldb *SQLiteDB) UpdateToolParam(toolID uint, paramName, paramValue string) error {
+	return sqldb.db.Model(&ToolParam{}).
+		Where("tool_id = ? AND param_name = ?", toolID, paramName).
+		Update("param_value", paramValue).Error
+}
+
+// DeleteToolParam deletes a specific tool parameter
+func (sqldb *SQLiteDB) DeleteToolParam(toolID uint, paramName string) error {
+	return sqldb.db.Where("tool_id = ? AND param_name = ?", toolID, paramName).Delete(&ToolParam{}).Error
+}
+
+// LoadToolsToDB loads tools from tool metadata into the database
+func loadToolsToDB(db *SQLiteDB, tools []ToolMetadata) error {
+	for _, tool := range tools {
+		// Check if the tool exists
+		var existingTool ToolMetadata
+		err := db.db.Where("name = ?", tool.Name).First(&existingTool).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// Create the tool metadata
+				if err := db.CreateToolMetadata(tool); err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		} else {
+			// Update the existing tool metadata
+			err = db.UpdateToolMetadataByName(tool.Name, tool.Enabled)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Update or create parameters
+		for _, param := range tool.Params {
+			if err := db.CreateToolParam(existingTool.ID, param.ParamName, param.ParamValue); err != nil {
+				return err
+			}
+		}
+	}
+	log.Println("Tools metadata loaded to database")
+	return nil
+}
+
+// invokeToolByName loads a tool by name and adds it to the WorkflowManager if enabled
+func invokeToolByName(db *SQLiteDB, toolName string, wm *WorkflowManager) error {
+	toolMetadata, err := db.GetToolMetadataByName(toolName)
 	if err != nil {
-		log.Fatalf("Error retrieving tool: %v", err)
+		return err
 	}
 
-	fmt.Printf("Tool: %s\n", tool.Name)
-	fmt.Printf("Enabled: %v\n", tool.Enabled)
-	for _, param := range tool.Parameters {
-		fmt.Printf("  Parameter: %s = %s\n", param.ParamName, param.ParamValue)
-	}
+	// Ensure the tool is enabled before adding to the WorkflowManager
+	if toolMetadata.Enabled {
+		// Instantiate the actual tool (handled in tools.go)
+		var toolInstance Tool
+		switch toolMetadata.Name {
+		case "WebGetTool":
+			toolInstance = &WebGetTool{enabled: toolMetadata.Enabled}
+		case "MemoryTool":
+			toolInstance = &MemoryTool{enabled: toolMetadata.Enabled}
+		}
 
-	return *tool
+		// Convert the parameters from the database into a map and apply them
+		params := make(map[string]interface{})
+		for _, param := range toolMetadata.Params {
+			params[param.ParamName] = param.ParamValue
+		}
+
+		// Set the parameters on the tool instance
+		err := toolInstance.SetParams(params)
+		if err != nil {
+			return fmt.Errorf("error setting parameters for tool %s: %v", toolMetadata.Name, err)
+		}
+
+		// Add the tool to the WorkflowManager
+		return wm.AddTool(toolInstance, toolMetadata.Name)
+	}
+	return nil
 }

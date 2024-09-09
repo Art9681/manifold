@@ -14,9 +14,10 @@ var (
 
 // WebSocketMessage represents a message sent over WebSocket.
 type WebSocketMessage struct {
-	ChatMessage string                 `json:"chat_message"`
-	Model       string                 `json:"model"`
-	Headers     map[string]interface{} `json:"HEADERS"`
+	ChatMessage      string                 `json:"chat_message"`
+	RoleInstructions string                 `json:"role_instructions"`
+	Model            string                 `json:"model"`
+	Headers          map[string]interface{} `json:"HEADERS"`
 }
 
 func handleWebSocketConnection(c echo.Context) error {
@@ -35,14 +36,15 @@ func handleWebSocketConnection(c echo.Context) error {
 		return err
 	}
 
-	cpt := GetSystemTemplate(wsMessage.ChatMessage)
+	cpt := GetSystemTemplate(wsMessage.RoleInstructions, wsMessage.ChatMessage)
 
 	// Create a new CompletionRequest using the chat message
 	payload := &CompletionRequest{
 		Messages:    cpt.Messages,
-		Temperature: 0.3,
-		MaxTokens:   128000,
+		Temperature: 0.6,
+		MaxTokens:   8192,
 		Stream:      true,
+		TopP:        0.9,
 	}
 
 	for {

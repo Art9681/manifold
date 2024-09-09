@@ -71,6 +71,7 @@ type CompletionRequest struct {
 	//Model       string    `json:"model"`
 	Messages    []Message `json:"messages"`
 	Temperature float64   `json:"temperature"`
+	TopP        float64   `json:"top_p"`
 	MaxTokens   int       `json:"max_tokens"`
 	Stream      bool      `json:"stream"`
 }
@@ -119,12 +120,12 @@ type UsageMetrics struct {
 }
 
 // GetSystemTemplate returns the system template.
-func GetSystemTemplate(userPrompt string) ChatPromptTemplate {
+func GetSystemTemplate(systemPrompt string, userPrompt string) ChatPromptTemplate {
 	userPrompt = fmt.Sprintf("{%s}", userPrompt)
 	template := NewChatPromptTemplate([]Message{
 		{
 			Role:    "system",
-			Content: "You are a world-class AI system, capable of complex reasoning and reflection. Reason through the query inside <thinking> tags, and then provide your final response inside <output> tags. If you detect that you made a mistake in your reasoning at any point, correct yourself inside <reflection> tags.",
+			Content: systemPrompt,
 		},
 		{
 			Role:    "user",
@@ -255,19 +256,7 @@ func IncrementTurn() int {
 // handleChatSubmit handles the submission of chat messages.
 func handleChatSubmit(c echo.Context) error {
 	userPrompt := c.FormValue("userprompt")
-	role := c.FormValue("role")
-
-	// Get the role instructions
-	// This is a hack to get the role instructions
-	// This needs to be set by the frontend dropdown
-	//config := c.Get("config").(*Config)
-	//roleInstructions := config.CompletionsRole[0].Instructions
-
-	// Set the chat role
-	chatRole := &CompletionsRole{
-		Name:         role,
-		Instructions: "You are a helpful AI assistant.",
-	}
+	roleInstructions := c.FormValue("role_instructions")
 
 	// Stream the completion response to the client
 
@@ -275,14 +264,14 @@ func handleChatSubmit(c echo.Context) error {
 
 	// render map into echo chat.html template
 	return c.Render(http.StatusOK, "chat", echo.Map{
-		"username":  "User",
-		"message":   userPrompt,
-		"assistant": "Assistant",
-		"model":     "Local",
-		"turnID":    turnID,
-		"wsRoute":   "",
-		"hosts":     "http://192.168.0.110:32182", // Do not hard code this
-		"role":      chatRole.GetInstructions(),
+		"username":         "User",
+		"message":          userPrompt,
+		"assistant":        "Assistant",
+		"model":            "Local",
+		"turnID":           turnID,
+		"wsRoute":          "",
+		"hosts":            "http://192.168.0.110:32182", // Do not hard code this
+		"roleInstructions": roleInstructions,
 	})
 }
 
@@ -357,27 +346,4 @@ func handleGetAllChatRoles(c echo.Context, config *Config) error {
 	}
 
 	return c.JSON(http.StatusOK, rolesMap)
-}
-
-// handleGetRoleInstructions handles the retrieval of the role instructions.
-func handleGetRoleInstructions(c echo.Context) error {
-	role := c.Param("role")
-
-	// Get the role instructions
-	// This is a hack to get the role instructions
-	// This needs to be set by the frontend dropdown
-	//config := c.Get("config").(*Config)
-	//roleInstructions := config.CompletionsRole[0].Instructions
-
-	// Retrieve the role instructions from the app config
-
-	// Set the chat role
-	chatRole := &CompletionsRole{
-		Name:         role,
-		Instructions: "You are a helpful AI assistant.",
-	}
-
-	return c.JSON(http.StatusOK, map[string]string{
-		"role": chatRole.GetInstructions(),
-	})
 }

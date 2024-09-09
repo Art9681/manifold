@@ -48,7 +48,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	err = db.AutoMigrate(&Tool{}, &ToolParam{}, &CompletionsRole{}, &ModelParams{}, &URLTracking{})
+	err = db.AutoMigrate(&ToolMetadata{}, &ToolParam{}, &CompletionsRole{}, &ModelParams{}, &URLTracking{})
 	if err != nil {
 		log.Fatal(err)
 	}
