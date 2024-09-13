@@ -196,6 +196,7 @@ func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.R
 	// TODO: Add a better way to handle the model selection using the frontend
 	// Jank way to set the model to gpt-4o-mini if the client url is openai
 	// if the client url is openai, set the payload model to gpt-4o-mini
+	// this should not be hard coded but loaded from app config instead
 	if client.BaseURL == "https://api.openai.com/v1" {
 		payload.Model = "gpt-4o-mini"
 	}
