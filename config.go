@@ -20,6 +20,7 @@ type ServiceConfig struct {
 }
 
 type Config struct {
+	OpenAIAPIKey   string            `yaml:"openai_api_key,omitempty"`
 	DataPath       string            `yaml:"data_path,omitempty"`
 	LLMBackend     string            `yaml:"llm_backend"`
 	Services       []ServiceConfig   `yaml:"services"`
@@ -40,19 +41,24 @@ func LoadConfig(filename string) (*Config, error) {
 		return nil, fmt.Errorf("error unmarshaling config: %w", err)
 	}
 
-	// Set default values for each Language model
-	for i := range config.LanguageModels {
-		if config.LanguageModels[i].Temperature == 0.0 {
-			config.LanguageModels[i].Temperature = 0.7
-		}
-		if config.LanguageModels[i].TopP == 0.0 {
-			config.LanguageModels[i].TopP = 0.9
-		}
-		if config.LanguageModels[i].TopK == 0 {
-			config.LanguageModels[i].TopK = 95
-		}
-		if config.LanguageModels[i].RepetitionPenalty == 0.0 {
-			config.LanguageModels[i].RepetitionPenalty = 1.0
+	// Ensure OpenAI API key is set if backend is OpenAI
+	if config.LLMBackend == "openai" && config.OpenAIAPIKey == "" {
+		return nil, fmt.Errorf("openai_api_key must be set when llm_backend is 'openai'")
+	} else {
+		// Set default values for each Language model
+		for i := range config.LanguageModels {
+			if config.LanguageModels[i].Temperature == 0.0 {
+				config.LanguageModels[i].Temperature = 0.7
+			}
+			if config.LanguageModels[i].TopP == 0.0 {
+				config.LanguageModels[i].TopP = 0.9
+			}
+			if config.LanguageModels[i].TopK == 0 {
+				config.LanguageModels[i].TopK = 95
+			}
+			if config.LanguageModels[i].RepetitionPenalty == 0.0 {
+				config.LanguageModels[i].RepetitionPenalty = 1.0
+			}
 		}
 	}
 

@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	baseURL             = "http://192.168.0.110:32182/v1"
-	completionsEndpoint = "/chat/completions"
-	ttsEndpoint         = "/audio/speech"
+	//baseURL = "https://api.openai.com/v1"
+	//completionsEndpoint = "/chat/completions"
+	ttsEndpoint = "/audio/speech"
 )
 
 var (
@@ -68,7 +68,7 @@ type Model struct {
 
 // CompletionRequest represents the payload for the completion API.
 type CompletionRequest struct {
-	//Model       string    `json:"model"`
+	Model       string    `json:"model,omitempty"`
 	Messages    []Message `json:"messages"`
 	Temperature float64   `json:"temperature"`
 	TopP        float64   `json:"top_p"`
@@ -166,34 +166,64 @@ func (cpt *ChatPromptTemplate) FormatMessages(vars map[string]string) []Message 
 }
 
 // SendRequest sends a request to the OpenAI API and decodes the response.
-func SendRequest(endpoint string, payload *CompletionRequest) (*http.Response, error) {
-	// Convert the payload to json
+// func SendRequest(endpoint string, payload *CompletionRequest) (*http.Response, error) {
+// 	// Convert the payload to json
+// 	jsonPayload, err := json.Marshal(payload)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	fmt.Println(string(jsonPayload))
+
+// 	req, err := http.NewRequest("POST", "http://192.168.0.110:32182/v1/chat/completions", bytes.NewBuffer(jsonPayload))
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	req.Header.Set("Content-Type", "application/json")
+// 	//req.Header.Set("Authorization", "Bearer "+apiKey) // Used for public services
+
+// 	res, err := http.DefaultClient.Do(req)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	return res, nil
+// }
+
+func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.Response, error) {
+
+	// TODO: Add a better way to handle the model selection using the frontend
+	// Jank way to set the model to gpt-4o-mini if the client url is openai
+	// if the client url is openai, set the payload model to gpt-4o-mini
+	if client.BaseURL == "https://api.openai.com/v1" {
+		payload.Model = "gpt-4o-mini"
+	}
+
+	// Convert the payload to JSON
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 
-	fmt.Println(string(jsonPayload))
-
-	req, err := http.NewRequest("POST", "http://192.168.0.110:32182/v1/chat/completions", bytes.NewBuffer(jsonPayload))
+	url := client.BaseURL + "/chat/completions"
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	//req.Header.Set("Authorization", "Bearer "+apiKey) // Used for public services
 
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
+	if client.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+client.APIKey)
 	}
 
-	return res, nil
+	return http.DefaultClient.Do(req)
 }
 
-func StreamCompletionToWebSocket(c *websocket.Conn, chatID int, model string, payload *CompletionRequest, responseBuffer *bytes.Buffer) error {
-
-	resp, err := SendRequest(completionsEndpoint, payload)
+func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID int, model string, payload *CompletionRequest, responseBuffer *bytes.Buffer) error {
+	// Use llmClient to send the request
+	resp, err := llmClient.SendCompletionRequest(payload)
 	if err != nil {
 		return err
 	}
@@ -257,6 +287,7 @@ func IncrementTurn() int {
 func handleChatSubmit(c echo.Context) error {
 	userPrompt := c.FormValue("userprompt")
 	roleInstructions := c.FormValue("role_instructions")
+	endpoint := c.FormValue("endpoint")
 
 	// Stream the completion response to the client
 
@@ -264,13 +295,13 @@ func handleChatSubmit(c echo.Context) error {
 
 	// render map into echo chat.html template
 	return c.Render(http.StatusOK, "chat", echo.Map{
-		"username":         "User",
-		"message":          userPrompt,
-		"assistant":        "Assistant",
-		"model":            "Local",
+		"username":  "User",
+		"message":   userPrompt,
+		"assistant": "Assistant",
+		//"model":            "/Users/arturoaquino/.eternal-v1/models/gemma-2-27b-it/gemma-2-27b-it-Q8_0.gguf",
 		"turnID":           turnID,
 		"wsRoute":          "",
-		"hosts":            "http://192.168.0.110:32182", // Do not hard code this
+		"endpoint":         endpoint,
 		"roleInstructions": roleInstructions,
 	})
 }

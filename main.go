@@ -16,6 +16,8 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 )
 
+var llmClient LLMClient
+
 func main() {
 	// Define the verbose logging flag
 	var verbose bool
@@ -79,42 +81,55 @@ func main() {
 	e.Use(middleware.Recover())
 
 	// CORS default - For dev only
-	// Allows requests from any origin wth GET, HEAD, PUT, POST or DELETE method.
 	e.Use(middleware.CORS())
 
-	// CORS restricted - Production Settings
-	// Allows requests from any `https://labstack.com` or `https://labstack.net` origin
-	// wth GET, PUT, POST or DELETE method.
-	// e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-	// 	AllowOrigins: []string{"https://labstack.com", "https://labstack.net"},
-	// 	AllowMethods: []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete},
-	// }))
-
 	// Enable tracing middleware
-	// https://echo.labstack.com/docs/middleware/jaeger
 	c := jaegertracing.New(e, nil)
 	defer c.Close()
 
 	// Set up routes
 	setupRoutes(e, config)
 
-	// Create a completions service context
+	// Declare variables for the completions service
 	var completionsService *ExternalService
-	completionsCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	var completionsCtx context.Context
+	var cancel context.CancelFunc
 
-	var llmService ServiceConfig
-	if config.LLMBackend == "gguf" {
-		llmService = config.Services[1]
-	} else if config.LLMBackend == "mlx" {
-		llmService = config.Services[2]
-	}
+	switch config.LLMBackend {
+	case "gguf":
+		llmService := config.Services[1]
+		completionsService = NewExternalService(llmService, verbose)
+		completionsCtx, cancel = context.WithCancel(context.Background())
 
-	completionsService = NewExternalService(llmService, true)
+		if err := completionsService.Start(completionsCtx); err != nil {
+			e.Logger.Fatal(err)
+		}
 
-	// Start the completions service
-	if err := completionsService.Start(completionsCtx); err != nil {
-		e.Logger.Fatal(err)
+		// Construct the base URL from Host and Port
+		baseURL := fmt.Sprintf("http://%s:%d/v1", llmService.Host, llmService.Port)
+		llmClient = NewLocalLLMClient(baseURL, "", "")
+
+	case "mlx":
+		llmService := config.Services[2]
+		completionsService = NewExternalService(llmService, verbose)
+		completionsCtx, cancel = context.WithCancel(context.Background())
+
+		if err := completionsService.Start(completionsCtx); err != nil {
+			e.Logger.Fatal(err)
+		}
+
+		// Construct the base URL from Host and Port
+		baseURL := fmt.Sprintf("http://%s:%d/v1", llmService.Host, llmService.Port)
+		llmClient = NewLocalLLMClient(baseURL, "", "")
+
+	case "openai":
+		if config.OpenAIAPIKey == "" {
+			log.Fatal("OpenAI API key is not set in config")
+		}
+		llmClient = NewLocalLLMClient("https://api.openai.com/v1", "gpt-4o-mini", config.OpenAIAPIKey)
+
+	default:
+		log.Fatal("Invalid LLMBackend specified in config")
 	}
 
 	// Set up graceful shutdown
@@ -124,20 +139,22 @@ func main() {
 		<-quit
 
 		// Cancel the context to signal all operations to stop
-		cancel()
+		if cancel != nil {
+			cancel()
+		}
 
-		// Stop the MLX service first
+		// Stop the completions service first
 		if completionsService != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
+			ctx, cancelTimeout := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancelTimeout()
 			if err := completionsService.Stop(ctx); err != nil {
 				e.Logger.Info(err)
 			}
 		}
 
 		// Then shut down the Echo server
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+		ctx, cancelTimeout := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelTimeout()
 		if err := e.Shutdown(ctx); err != nil {
 			e.Logger.Error(err)
 		}

@@ -3,14 +3,17 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 )
 
-var (
-	upgrader = websocket.Upgrader{}
-)
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
 
 // WebSocketMessage represents a message sent over WebSocket.
 type WebSocketMessage struct {
@@ -23,6 +26,7 @@ type WebSocketMessage struct {
 func handleWebSocketConnection(c echo.Context) error {
 	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
+		c.Logger().Error("WebSocket upgrade failed:", err)
 		return err
 	}
 	defer ws.Close()
@@ -40,6 +44,7 @@ func handleWebSocketConnection(c echo.Context) error {
 
 	// Create a new CompletionRequest using the chat message
 	payload := &CompletionRequest{
+		Model:       wsMessage.Model,
 		Messages:    cpt.Messages,
 		Temperature: 0.6,
 		MaxTokens:   8192,
@@ -48,12 +53,13 @@ func handleWebSocketConnection(c echo.Context) error {
 	}
 
 	for {
-		err = StreamCompletionToWebSocket(ws, 0, wsMessage.Model, payload, &responseBuffer)
+		// Pass llmClient as an argument
+		err = StreamCompletionToWebSocket(ws, llmClient, 0, wsMessage.Model, payload, &responseBuffer)
 		if err != nil {
 			return err
 		}
 
-		// Clear the completion request messages so when a new one is submitted it sends the correct one
+		// Clear the completion request messages for the next submission
 		payload.Messages = nil
 
 		_, _, err := ws.ReadMessage()
