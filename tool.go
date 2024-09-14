@@ -40,6 +40,7 @@ func RegisterTools(wm WorkflowManager, config *Config) (WorkflowManager, error) 
 		case "websearch":
 			if toolConfig.Parameters["enabled"].(bool) {
 				tool := &WebSearchTool{}
+				tool.SetParams(toolConfig.Parameters)
 				wm.AddTool(tool, toolConfig.Name)
 			}
 		case "webget":
@@ -111,10 +112,28 @@ type WebSearchTool struct {
 
 // Process executes the web search tool logic.
 func (t *WebSearchTool) Process(ctx context.Context, input string) (string, error) {
+	// Print the search engine and endpoint for debugging
+	log.Printf("Search Engine: %s, Endpoint: %s", t.SearchEngine, t.Endpoint)
+
 	// Example implementation using existing internal/web functions
 	urls := web.GetSearXNGResults(t.Endpoint, input)
 
-	return strings.Join(urls, "\n"), nil
+	// Retrieve the top N search results using webget tool
+	var aggregatedContent strings.Builder
+	for i, u := range urls {
+		if i >= t.TopN {
+			break
+		}
+		content, err := web.WebGetHandler(u)
+		if err != nil {
+			log.Printf("Failed to fetch content from URL %s: %v", u, err)
+			continue
+		}
+		aggregatedContent.WriteString(content)
+		aggregatedContent.WriteString("\n") // Separator between contents
+	}
+
+	return aggregatedContent.String(), nil
 }
 
 // Enabled returns the enabled status of the tool.
