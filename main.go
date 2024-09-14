@@ -16,7 +16,10 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 )
 
-var llmClient LLMClient
+var (
+	llmClient       LLMClient
+	workflowManager WorkflowManager
+)
 
 func main() {
 	// Define the verbose logging flag
@@ -90,6 +93,17 @@ func main() {
 	// Set up routes
 	setupRoutes(e, config)
 
+	// Register tools based on configuration
+	workflowManager, err = RegisterTools(workflowManager, config)
+	if err != nil {
+		log.Printf("Failed to register tools: %v", err)
+	}
+
+	// Get the list of tools from the WorkflowManager
+	tools := workflowManager.ListTools()
+	fmt.Println("Registered Tools:")
+	fmt.Println(tools)
+
 	// Declare variables for the completions service
 	var completionsService *ExternalService
 	var completionsCtx context.Context
@@ -159,6 +173,17 @@ func main() {
 			e.Logger.Error(err)
 		}
 	}()
+
+	// Example: Run the workflow with a sample prompt
+	/*
+		samplePrompt := "Please summarize the content from https://example.com."
+		result, err := wm.Run(context.Background(), samplePrompt)
+		if err != nil {
+			log.Println("Workflow Error:", err)
+		} else {
+			fmt.Println("Workflow Result:", result)
+		}
+	*/
 
 	e.Logger.Info(e.Start(fmt.Sprintf(":%d", config.Services[0].Port)))
 }
