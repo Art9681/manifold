@@ -4,7 +4,9 @@ package main
 import (
 	"embed"
 	"fmt"
+	"io"
 	"log"
+	"manifold/internal/edata"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +20,7 @@ import (
 var embedFS embed.FS
 
 // initializeApplication initializes the application with the given configuration.
-func initializeApplication(config *Config) (*SQLiteDB, *bleve.Index, error) {
+func initializeApplication(config *Config) (*SQLiteDB, bleve.Index, error) {
 	createDataDirectory(config.DataPath)
 	initializeServer(config.DataPath)
 	db, err := initializeDatabase(config.DataPath)
@@ -26,9 +28,23 @@ func initializeApplication(config *Config) (*SQLiteDB, *bleve.Index, error) {
 		return nil, nil, err
 	}
 
-	searchIndex, err := initializeSearchIndex(config.DataPath)
+	searchIndex, err = initializeSearchIndex(config.DataPath)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// Print the number of documents in the search index
+	count, err := searchIndex.DocCount()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get document count from search index: %w", err)
+	}
+
+	fmt.Printf("Search index contains %d documents\n", count)
+
+	// Initialize the edata database
+	err = edata.InitDB(filepath.Join(config.DataPath, "edata.db"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize edata database: %w", err)
 	}
 
 	return db, searchIndex, nil
@@ -89,25 +105,95 @@ func initializeDatabase(dataPath string) (*SQLiteDB, error) {
 }
 
 // initializeSearchIndex initializes the search index using Bleve.
-func initializeSearchIndex(dataPath string) (*bleve.Index, error) {
+func initializeSearchIndex(dataPath string) (bleve.Index, error) {
 	searchDB := filepath.Join(dataPath, "search.bleve")
 
-	if _, err := os.Stat(searchDB); os.IsNotExist(err) {
-		mapping := bleve.NewIndexMapping()
-		searchIndex, err := bleve.New(searchDB, mapping)
-		if err != nil {
-			return nil, err
+	// Check if the index directory exists
+	_, err := os.Stat(searchDB)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Index directory does not exist, create new index
+			mapping := bleve.NewIndexMapping()
+			searchIndex, err = bleve.New(searchDB, mapping)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create new Bleve index: %w", err)
+			}
+			log.Println("Created new search index")
+			return searchIndex, nil
+		} else {
+			return nil, fmt.Errorf("failed to stat search index directory: %w", err)
 		}
-
-		return &searchIndex, nil
-	} else {
-		searchIndex, err := bleve.Open(searchDB)
-		if err != nil {
-			return nil, err
-		}
-
-		return &searchIndex, nil
 	}
+
+	// Check if the index directory is empty
+	isEmpty, err := isDirEmpty(searchDB)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check if search index directory is empty: %w", err)
+	}
+
+	if isEmpty {
+		// Index directory exists but is empty, remove it
+		log.Println("Search index directory is empty, removing it")
+		err = os.RemoveAll(searchDB)
+		if err != nil {
+			return nil, fmt.Errorf("failed to remove empty search index directory: %w", err)
+		}
+		// Create new index
+		mapping := bleve.NewIndexMapping()
+		searchIndex, err = bleve.New(searchDB, mapping)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create new Bleve index: %w", err)
+		}
+		log.Println("Created new search index")
+		return searchIndex, nil
+	}
+
+	// Attempt to open existing index
+	log.Println("Opening existing search index")
+	searchIndex, err = bleve.Open(searchDB)
+	if err != nil {
+		// Failed to open existing index, perhaps it's corrupted
+		log.Printf("Failed to open existing search index: %v", err)
+		// Remove the corrupted index directory
+		log.Println("Removing corrupted search index")
+		err = os.RemoveAll(searchDB)
+		if err != nil {
+			return nil, fmt.Errorf("failed to remove corrupted search index: %w", err)
+		}
+		// Create a new index
+		mapping := bleve.NewIndexMapping()
+		searchIndex, err = bleve.New(searchDB, mapping)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create new Bleve index: %w", err)
+		}
+		log.Println("Created new search index after removing corrupted index")
+	}
+
+	// Successfully opened existing index or created new one
+	// Print the number of documents in the index
+	count, err := searchIndex.DocCount()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get document count from search index: %w", err)
+	}
+	fmt.Printf("Search index contains %d documents\n", count)
+
+	return searchIndex, nil
+}
+
+// isDirEmpty checks whether a directory is empty
+func isDirEmpty(name string) (bool, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	// Read only one entry from the directory
+	_, err = f.Readdir(1)
+	if err == io.EOF {
+		return true, nil
+	}
+	return false, err
 }
 
 // downloadDefaultImageModel downloads the default image model based on the configuration.

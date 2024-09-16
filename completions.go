@@ -5,12 +5,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 
+	"manifold/internal/documents"
+	"manifold/internal/edata"
 	"manifold/internal/web"
 )
 
@@ -24,6 +28,12 @@ var (
 	// TurnCounter is a counter for the number of turns in a chat.
 	TurnCounter int
 )
+
+type ChatDocument struct {
+	ID       string `json:"id"`
+	Prompt   string `json:"prompt"`
+	Response string `json:"response"`
+}
 
 type CompletionsRole struct {
 	ID           uint   `gorm:"primaryKey" yaml:"-"`
@@ -165,32 +175,6 @@ func (cpt *ChatPromptTemplate) FormatMessages(vars map[string]string) []Message 
 	return formattedMessages
 }
 
-// SendRequest sends a request to the OpenAI API and decodes the response.
-// func SendRequest(endpoint string, payload *CompletionRequest) (*http.Response, error) {
-// 	// Convert the payload to json
-// 	jsonPayload, err := json.Marshal(payload)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	fmt.Println(string(jsonPayload))
-
-// 	req, err := http.NewRequest("POST", "http://192.168.0.110:32182/v1/chat/completions", bytes.NewBuffer(jsonPayload))
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	req.Header.Set("Content-Type", "application/json")
-// 	//req.Header.Set("Authorization", "Bearer "+apiKey) // Used for public services
-
-// 	res, err := http.DefaultClient.Do(req)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return res, nil
-// }
-
 func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.Response, error) {
 
 	// TODO: Add a better way to handle the model selection using the frontend
@@ -223,6 +207,8 @@ func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.R
 }
 
 func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID int, model string, payload *CompletionRequest, responseBuffer *bytes.Buffer) error {
+	timestamp := time.Now().Format(time.RFC3339)
+
 	// Use llmClient to send the request
 	resp, err := llmClient.SendCompletionRequest(payload)
 	if err != nil {
@@ -246,12 +232,19 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 			}
 
 			if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+
+				err := SaveChatTurn(payload.Messages[0].Content, responseBuffer.String(), timestamp)
+				if err != nil {
+					log.Printf("Error saving chat turn: %v", err)
+				}
+
 				return fmt.Errorf("%s", responseBuffer.String())
 			}
 
 			for _, choice := range data.Choices {
 				// If the finish reason is "stop", then stop streaming
 				if choice.FinishReason == "stop" {
+
 					// Clear all buffers and prompts
 					responseBuffer.Reset()
 
@@ -307,51 +300,6 @@ func handleChatSubmit(c echo.Context) error {
 	})
 }
 
-// handleChatSubmit handles the submission of chat messages.
-// func handleChatSubmit(c echo.Context) error {
-// 	userPrompt := c.FormValue("userprompt")
-
-// 	// Create a new CompletionRequest using the chat message
-// 	payload := &CompletionRequest{
-// 		Messages:    []Message{{Role: "user", Content: userPrompt}},
-// 		Temperature: 0.3,
-// 		MaxTokens:   128000,
-// 		Stream:      true,
-// 	}
-
-// 	// Stream the JSON response back to the client
-// 	c.Response().Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-// 	c.Response().WriteHeader(http.StatusOK)
-
-// 	resp, err := SendRequest(completionsEndpoint, payload)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	defer resp.Body.Close()
-
-// 	scanner := bufio.NewScanner(resp.Body)
-// 	for scanner.Scan() {
-// 		line := scanner.Text()
-// 		if strings.HasPrefix(line, "data: ") {
-// 			jsonStr := line[6:] // Strip the "data: " prefix
-
-// 			// Stream the data directly to the response
-// 			if _, err := c.Response().Write([]byte(jsonStr + "\n")); err != nil {
-// 				return err
-// 			}
-
-// 			// Flush the buffer to ensure the data is sent immediately
-// 			c.Response().Flush()
-// 		}
-// 	}
-
-// 	if err := scanner.Err(); err != nil {
-// 		return err
-// 	}
-
-// 	return nil
-// }
-
 // handleSetChatRole handles the setting of the chat role.
 func handleSetChatRole(c echo.Context, config *Config) error {
 	role := c.FormValue("role")
@@ -378,4 +326,57 @@ func handleGetAllChatRoles(c echo.Context, config *Config) error {
 	}
 
 	return c.JSON(http.StatusOK, rolesMap)
+}
+
+func SaveChatTurn(prompt, response, timestamp string) error {
+	// Concatenate the prompt and response
+	concatenatedText := fmt.Sprintf("User: %s\nAssistant: %s", prompt, response)
+
+	// Split the concatenated text into chunks of 500 characters
+	chunks := documents.SplitTextByCount(concatenatedText, 500)
+
+	// Prepare the document ID (you can use a unique ID generator if needed)
+	chatID := fmt.Sprintf("chat-%d", time.Now().UnixNano())
+
+	// Store the concatenated text in the Bleve search index
+	doc := ChatDocument{
+		ID:       chatID,
+		Prompt:   prompt,
+		Response: response,
+	}
+
+	err := searchIndex.Index(doc.ID, doc)
+	if err != nil {
+		log.Printf("Error indexing document in Bleve: %v", err)
+		// Continue even if indexing fails
+	}
+
+	// Save chunks to the edata database
+	var previousDocID uint
+	for _, chunk := range chunks {
+		// Save the chunk as a document in edata
+		doc, err := edata.SaveDocument(chunk, nil)
+		if err != nil {
+			log.Printf("Error saving chunk to edata database: %v", err)
+			continue
+		}
+
+		// If there is a previous document, create a graph edge
+		if previousDocID != 0 {
+			err := edata.AddGraphEdge(previousDocID, doc.ID)
+			if err != nil {
+				log.Printf("Error adding graph edge between documents %d and %d: %v", previousDocID, doc.ID, err)
+			}
+		}
+
+		previousDocID = doc.ID
+	}
+
+	return nil
+}
+
+func GenerateEmbedding(text string) ([]float64, error) {
+	// Implement embedding generation logic here
+	// For now, return nil or a placeholder
+	return nil, nil
 }

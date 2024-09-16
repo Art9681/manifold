@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/blevesearch/bleve/v2"
 	"github.com/labstack/echo-contrib/jaegertracing"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -19,6 +20,7 @@ import (
 var (
 	llmClient       LLMClient
 	workflowManager WorkflowManager
+	searchIndex     bleve.Index
 )
 
 func main() {
@@ -94,7 +96,7 @@ func main() {
 	setupRoutes(e, config)
 
 	// Register tools based on configuration
-	workflowManager, err = RegisterTools(workflowManager, config)
+	err = RegisterTools(&workflowManager, config)
 	if err != nil {
 		log.Printf("Failed to register tools: %v", err)
 	}

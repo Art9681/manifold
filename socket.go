@@ -26,6 +26,8 @@ type WebSocketMessage struct {
 }
 
 func handleWebSocketConnection(c echo.Context) error {
+
+	// Upgrade the HTTP connection to a WebSocket connection.
 	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
 		c.Logger().Error("WebSocket upgrade failed:", err)

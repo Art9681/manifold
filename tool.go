@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"manifold/internal/web"
 )
@@ -31,33 +32,39 @@ type WorkflowManager struct {
 }
 
 // RegisterTools initializes and registers all enabled tools based on the configuration.
-func RegisterTools(wm WorkflowManager, config *Config) (WorkflowManager, error) {
+func RegisterTools(wm *WorkflowManager, config *Config) error {
 	for _, toolConfig := range config.Tools {
 		// Print tool configuration for debugging
 		log.Printf("Tool: %s, Parameters: %v", toolConfig.Name, toolConfig.Parameters)
 
 		switch toolConfig.Name {
 		case "websearch":
-			if toolConfig.Parameters["enabled"].(bool) {
+			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
 				tool := &WebSearchTool{}
-				tool.SetParams(toolConfig.Parameters)
+				err := tool.SetParams(toolConfig.Parameters)
+				if err != nil {
+					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
+				}
 				wm.AddTool(tool, toolConfig.Name)
 			}
 		case "webget":
-			if toolConfig.Parameters["enabled"].(bool) {
+			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
 				tool := NewWebGetTool()
+				err := tool.SetParams(toolConfig.Parameters)
+				if err != nil {
+					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
+				}
 				wm.AddTool(tool, toolConfig.Name)
 			}
 		}
 	}
 
-	return wm, nil
+	return nil
 }
 
 // AddTool adds a new tool to the workflow if it is enabled.
 func (wm *WorkflowManager) AddTool(tool Tool, name string) error {
 	wm.tools = append(wm.tools, ToolWrapper{Tool: tool, Name: name})
-
 	return nil
 }
 
@@ -73,7 +80,7 @@ func (wm *WorkflowManager) RemoveTool(name string) error {
 }
 
 // ListTools returns a list of tool names in the workflow.
-func (wm WorkflowManager) ListTools() []string {
+func (wm *WorkflowManager) ListTools() []string {
 	var toolNames []string
 	for _, wrapper := range wm.tools {
 		toolNames = append(toolNames, wrapper.Name)
@@ -97,7 +104,7 @@ func (wm *WorkflowManager) Run(ctx context.Context, prompt string) (string, erro
 		currentInput = processed
 	}
 	if result == "" {
-		return prompt, errors.New("no tools processed the input or no result generated")
+		return prompt, nil
 	}
 	return result, nil
 }
@@ -108,6 +115,7 @@ type WebSearchTool struct {
 	SearchEngine string
 	Endpoint     string
 	TopN         int
+	Concurrency  int // New field to control concurrency
 }
 
 // Process executes the web search tool logic.
@@ -115,25 +123,71 @@ func (t *WebSearchTool) Process(ctx context.Context, input string) (string, erro
 	// Print the search engine and endpoint for debugging
 	log.Printf("Search Engine: %s, Endpoint: %s", t.SearchEngine, t.Endpoint)
 
-	// Example implementation using existing internal/web functions
+	// Perform search using GetSearXNGResults
 	urls := web.GetSearXNGResults(t.Endpoint, input)
 
-	// Retrieve the top N search results using webget tool
-	var aggregatedContent strings.Builder
-	for i, u := range urls {
-		if i >= t.TopN {
-			break
-		}
-		content, err := web.WebGetHandler(u)
-		if err != nil {
-			log.Printf("Failed to fetch content from URL %s: %v", u, err)
-			continue
-		}
-		aggregatedContent.WriteString(content)
-		aggregatedContent.WriteString("\n") // Separator between contents
+	// Remove unwanted URLs (already done in GetSearXNGResults, but double-checking)
+	urls = web.RemoveUnwantedURLs(urls)
+
+	if len(urls) == 0 {
+		return "", errors.New("no URLs found after filtering")
 	}
 
-	return aggregatedContent.String(), nil
+	// Limit to TopN
+	if t.TopN > len(urls) {
+		t.TopN = len(urls)
+	}
+	topURLs := urls[:t.TopN]
+
+	// Fetch contents concurrently
+	type result struct {
+		content string
+		err     error
+	}
+
+	resultsChan := make(chan result, t.TopN)
+	var wg sync.WaitGroup
+
+	// Semaphore to limit concurrency
+	semaphore := make(chan struct{}, t.Concurrency)
+
+	for _, u := range topURLs {
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+			semaphore <- struct{}{}        // Acquire semaphore
+			defer func() { <-semaphore }() // Release semaphore
+
+			content, err := web.WebGetHandler(ctx, url)
+			if err != nil {
+				log.Printf("Failed to fetch content from URL %s: %v", url, err)
+				resultsChan <- result{content: "", err: err}
+				return
+			}
+			resultsChan <- result{content: content, err: nil}
+		}(u)
+	}
+
+	// Wait for all fetches to complete
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	var aggregatedContent strings.Builder
+	for res := range resultsChan {
+		if res.err == nil && res.content != "" {
+			aggregatedContent.WriteString(res.content)
+			aggregatedContent.WriteString("\n") // Separator between contents
+		}
+	}
+
+	finalResult := aggregatedContent.String()
+	if finalResult == "" {
+		return input, errors.New("no tools processed the input or no result generated")
+	}
+
+	return finalResult, nil
 }
 
 // Enabled returns the enabled status of the tool.
@@ -154,6 +208,11 @@ func (t *WebSearchTool) SetParams(params map[string]interface{}) error {
 	}
 	if topN, ok := params["top_n"].(int); ok {
 		t.TopN = topN
+	}
+	if concurrency, ok := params["concurrency"].(int); ok {
+		t.Concurrency = concurrency
+	} else {
+		t.Concurrency = 5 // Default concurrency level
 	}
 	return nil
 }
@@ -180,11 +239,13 @@ func (t *WebGetTool) Process(ctx context.Context, input string) (string, error) 
 		return "", nil // No URLs to process
 	}
 
-	var aggregatedContent strings.Builder
+	// Remove unwanted URLs
+	urls = web.RemoveUnwantedURLs(urls)
 
+	var aggregatedContent strings.Builder
 	for _, u := range urls {
 		// Fetch and process content using internal/web's WebGetHandler function
-		content, err := web.WebGetHandler(u)
+		content, err := web.WebGetHandler(ctx, u)
 		if err != nil {
 			log.Printf("Failed to fetch content from URL %s: %v", u, err)
 			continue
