@@ -1,9 +1,15 @@
 package main
 
-import "net/http"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+)
 
 type LLMClient interface {
 	SendCompletionRequest(payload *CompletionRequest) (*http.Response, error)
+	SendEmbeddingRequest(payload *EmbeddingRequest) (*http.Response, error)
 }
 
 type Client struct {
@@ -15,4 +21,28 @@ type Client struct {
 
 func NewLocalLLMClient(baseURL string, model string, apiKey string) LLMClient {
 	return &Client{BaseURL: baseURL, Model: model, APIKey: apiKey}
+}
+
+func (client *Client) SendEmbeddingRequest(payload *EmbeddingRequest) (*http.Response, error) {
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	url := client.BaseURL + "/embeddings"
+
+	fmt.Println("Sending request to:", url)
+	fmt.Println("Payload:", string(jsonPayload))
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if client.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+client.APIKey)
+	}
+
+	return http.DefaultClient.Do(req)
 }

@@ -148,6 +148,15 @@ func main() {
 		log.Fatal("Invalid LLMBackend specified in config")
 	}
 
+	var embeddingsService *ExternalService
+
+	// Initialize the embeddings service
+	embeddingsConfig := config.Services[4]
+	embeddingsService = NewExternalService(embeddingsConfig, verbose)
+	if err := embeddingsService.Start(completionsCtx); err != nil {
+		e.Logger.Fatal(err)
+	}
+
 	// Set up graceful shutdown
 	go func() {
 		quit := make(chan os.Signal, 1)
