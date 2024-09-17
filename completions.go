@@ -244,6 +244,10 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 			for _, choice := range data.Choices {
 				// If the finish reason is "stop", then stop streaming
 				if choice.FinishReason == "stop" {
+					err := SaveChatTurn(payload.Messages[0].Content, responseBuffer.String(), timestamp)
+					if err != nil {
+						log.Printf("Error saving chat turn: %v", err)
+					}
 
 					// Clear all buffers and prompts
 					responseBuffer.Reset()
@@ -352,10 +356,31 @@ func SaveChatTurn(prompt, response, timestamp string) error {
 	}
 
 	// Save chunks to the edata database
+	embeddingsStore := NewEmbeddingDB()
+	// embeddingsDb, err := embeddingsStore.LoadEmbeddings("./embeddings.json")
+	// if err != nil {
+	// 	fmt.Println("Error loading embeddings:", err)
+	// 	return nil
+	// }
+
 	var previousDocID uint
 	for _, chunk := range chunks {
+		embeddings, err := GenerateEmbedding(chunk, embeddingsStore)
+		if err != nil {
+			log.Printf("Error generating embeddings for chunk: %v", err)
+			continue
+		}
+
+		docEmbeddings := Embeddings{
+			Word:       chunk,
+			Vector:     embeddings,
+			Similarity: 0.0,
+		}
+
+		embeddingsStore.AddEmbedding(docEmbeddings)
+
 		// Save the chunk as a document in edata
-		doc, err := edata.SaveDocument(chunk, nil)
+		doc, err := edata.SaveDocument(chunk, embeddings)
 		if err != nil {
 			log.Printf("Error saving chunk to edata database: %v", err)
 			continue
@@ -372,11 +397,45 @@ func SaveChatTurn(prompt, response, timestamp string) error {
 		previousDocID = doc.ID
 	}
 
+	embeddingsStore.SaveEmbeddings("./embeddings.json")
+
 	return nil
 }
 
-func GenerateEmbedding(text string) ([]float64, error) {
-	// Implement embedding generation logic here
-	// For now, return nil or a placeholder
-	return nil, nil
+func GenerateEmbedding(text string, embeddingsDb *EmbeddingDB) ([]float64, error) {
+	// Invoke the embeddings API
+	textArr := []string{text}
+	embeddingRequest := EmbeddingRequest{
+		Input:          textArr,
+		Model:          "",
+		EncodingFormat: "float",
+	}
+
+	resp, err := llmClient.SendEmbeddingRequest(&embeddingRequest)
+	if err != nil {
+		log.Printf("Error sending embedding request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var embeddingResponse EmbeddingResponse
+	if err := json.NewDecoder(resp.Body).Decode(&embeddingResponse); err != nil {
+		log.Printf("Error decoding embedding response: %v", err)
+	}
+
+	if len(embeddingResponse.Data) == 0 {
+		return nil, fmt.Errorf("no embeddings found")
+	}
+
+	// Print the values of the embeddings
+	for _, emb := range embeddingResponse.Data {
+		log.Printf("Embedding: %v", emb.Embedding)
+	}
+
+	// Concatenate the embeddings into a single slice
+	var embeddings []float64
+	for _, emb := range embeddingResponse.Data {
+		embeddings = append(embeddings, emb.Embedding...)
+	}
+
+	return embeddings, nil
 }

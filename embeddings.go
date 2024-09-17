@@ -9,9 +9,9 @@ import (
 )
 
 type EmbeddingRequest struct {
-	Input          string `json:"input"`
-	Model          string `json:"model"`
-	EncodingFormat string `json:"encoding_format"`
+	Input          []string `json:"input"`
+	Model          string   `json:"model"`
+	EncodingFormat string   `json:"encoding_format"`
 }
 
 type EmbeddingResponse struct {
