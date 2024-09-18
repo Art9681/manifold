@@ -232,8 +232,7 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 			}
 
 			if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-
-				err := SaveChatTurn(payload.Messages[0].Content, responseBuffer.String(), timestamp)
+				err := SaveChatTurn(payload.Messages[1].Content, responseBuffer.String(), timestamp)
 				if err != nil {
 					log.Printf("Error saving chat turn: %v", err)
 				}
@@ -244,7 +243,7 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 			for _, choice := range data.Choices {
 				// If the finish reason is "stop", then stop streaming
 				if choice.FinishReason == "stop" {
-					err := SaveChatTurn(payload.Messages[0].Content, responseBuffer.String(), timestamp)
+					err := SaveChatTurn(payload.Messages[1].Content, responseBuffer.String(), timestamp)
 					if err != nil {
 						log.Printf("Error saving chat turn: %v", err)
 					}
@@ -424,9 +423,9 @@ func GenerateEmbedding(text string, embeddingsDb *EmbeddingDB) ([]float64, error
 	}
 
 	// Print the values of the embeddings
-	for _, emb := range embeddingResponse.Data {
-		log.Printf("Embedding: %v", emb.Embedding)
-	}
+	// for _, emb := range embeddingResponse.Data {
+	// 	log.Printf("Embedding: %v", emb.Embedding)
+	// }
 
 	// Concatenate the embeddings into a single slice
 	var embeddings []float64

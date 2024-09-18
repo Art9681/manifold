@@ -58,7 +58,7 @@ func handleWebSocketConnection(c echo.Context) error {
 		Model:       wsMessage.Model,
 		Messages:    cpt.FormatMessages(nil), // Assuming no additional variables
 		Temperature: 0.6,
-		MaxTokens:   8192,
+		MaxTokens:   8192, // Ensure this is set by the backend LLM config in a future commit.
 		Stream:      true,
 		TopP:        0.9,
 	}

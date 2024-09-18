@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"log"
 	"os"
@@ -10,6 +12,14 @@ import (
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search/query"
 )
+
+// GenerateMD5Hash generates an MD5 hash for a given chunk of text
+func GenerateMD5Hash(text string) string {
+	hash := md5.New()                    // Create a new MD5 hash instance
+	hash.Write([]byte(text))             // Write the text as bytes into the hash
+	hashBytes := hash.Sum(nil)           // Compute the final hash
+	return hex.EncodeToString(hashBytes) // Convert the hash to a hexadecimal string
+}
 
 // Index represents a Bleve index with common operations.
 type Index struct {

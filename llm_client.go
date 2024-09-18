@@ -31,8 +31,7 @@ func (client *Client) SendEmbeddingRequest(payload *EmbeddingRequest) (*http.Res
 
 	url := client.BaseURL + "/embeddings"
 
-	fmt.Println("Sending request to:", url)
-	fmt.Println("Payload:", string(jsonPayload))
+	fmt.Println("Sending embedding request to:", url)
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
 	if err != nil {
