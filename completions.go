@@ -339,12 +339,9 @@ func SaveChatTurn(prompt, response, timestamp string) error {
 	// Split the concatenated text into chunks of 500 characters
 	chunks := documents.SplitTextByCount(concatenatedText, 500)
 
-	// Prepare the document ID (you can use a unique ID generator if needed)
-	chatID := fmt.Sprintf("chat-%d", time.Now().UnixNano())
-
 	// Store the concatenated text in the Bleve search index
 	doc := ChatDocument{
-		ID:       chatID,
+		ID:       fmt.Sprintf("%d", time.Now().UnixNano()),
 		Prompt:   prompt,
 		Response: response,
 	}

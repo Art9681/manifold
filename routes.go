@@ -41,7 +41,9 @@ func setupRoutes(e *echo.Echo, config *Config) {
 		return handleSetChatRole(c, config)
 	})
 
+	// RAG endpoints
 	e.POST("/v1/embeddings", handleEmbeddingRequest)
+	e.POST("/v1/rag", handleRagRequest)
 
 	// tool routes
 	//e.GET("/v1/tools", handleRenderTools)
