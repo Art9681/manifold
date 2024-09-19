@@ -14,7 +14,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"manifold/internal/documents"
-	"manifold/internal/edata"
 	"manifold/internal/web"
 )
 
@@ -353,15 +352,10 @@ func SaveChatTurn(prompt, response, timestamp string) error {
 
 	// Save chunks to the edata database
 	embeddingsStore := NewEmbeddingDB()
-	// embeddingsDb, err := embeddingsStore.LoadEmbeddings("./embeddings.json")
-	// if err != nil {
-	// 	fmt.Println("Error loading embeddings:", err)
-	// 	return nil
-	// }
 
-	var previousDocID uint
+	// var previousDocID uint
 	for _, chunk := range chunks {
-		embeddings, err := GenerateEmbedding(chunk, embeddingsStore)
+		embeddings, err := GenerateEmbedding(chunk)
 		if err != nil {
 			log.Printf("Error generating embeddings for chunk: %v", err)
 			continue
@@ -376,21 +370,21 @@ func SaveChatTurn(prompt, response, timestamp string) error {
 		embeddingsStore.AddEmbedding(docEmbeddings)
 
 		// Save the chunk as a document in edata
-		doc, err := edata.SaveDocument(chunk, embeddings)
-		if err != nil {
-			log.Printf("Error saving chunk to edata database: %v", err)
-			continue
-		}
+		// doc, err := edata.SaveDocument(chunk, embeddings)
+		// if err != nil {
+		// 	log.Printf("Error saving chunk to edata database: %v", err)
+		// 	continue
+		// }
 
 		// If there is a previous document, create a graph edge
-		if previousDocID != 0 {
-			err := edata.AddGraphEdge(previousDocID, doc.ID)
-			if err != nil {
-				log.Printf("Error adding graph edge between documents %d and %d: %v", previousDocID, doc.ID, err)
-			}
-		}
+		// if previousDocID != 0 {
+		// 	err := edata.AddGraphEdge(previousDocID, doc.ID)
+		// 	if err != nil {
+		// 		log.Printf("Error adding graph edge between documents %d and %d: %v", previousDocID, doc.ID, err)
+		// 	}
+		// }
 
-		previousDocID = doc.ID
+		// previousDocID = doc.ID
 	}
 
 	embeddingsStore.SaveEmbeddings("./embeddings.json")
@@ -398,12 +392,12 @@ func SaveChatTurn(prompt, response, timestamp string) error {
 	return nil
 }
 
-func GenerateEmbedding(text string, embeddingsDb *EmbeddingDB) ([]float64, error) {
+func GenerateEmbedding(text string) ([]float64, error) {
 	// Invoke the embeddings API
 	textArr := []string{text}
 	embeddingRequest := EmbeddingRequest{
 		Input:          textArr,
-		Model:          "",
+		Model:          "eternal",
 		EncodingFormat: "float",
 	}
 

@@ -130,12 +130,17 @@ func WebGetHandler(parentCtx context.Context, address string) (string, error) {
 		return "", errors.New("scraping not allowed according to robots.txt")
 	}
 
-	// Get a Chrome context from the pool
+	// Get a fresh Chrome context from the pool
 	ctx := chromePool.Get()
-	defer chromePool.Put(ctx)
 
-	// Create a child context with timeout
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	// Reset the Chrome context to ensure it's not prematurely canceled
+	allocatorCtx, cancel := chromedp.NewExecAllocator(context.Background(), chromedp.Flag("headless", true))
+	defer cancel()
+	ctx, cancel = chromedp.NewContext(allocatorCtx, chromedp.WithLogf(log.Printf))
+	defer cancel()
+
+	// Apply a new timeout to the fresh context
+	ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	var docs string
@@ -184,6 +189,9 @@ func WebGetHandler(parentCtx context.Context, address string) (string, error) {
 
 	text := doc.Find("body").Text()
 	text = RemoveEmptyRows(text)
+
+	// Return the context to the pool after processing
+	chromePool.Put(ctx)
 
 	return text, nil
 }

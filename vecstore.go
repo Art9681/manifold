@@ -65,7 +65,7 @@ func GenerateEmbeddings(textChunks []string, client LLMClient) ([]Embeddings, er
 	// Create an embedding request payload
 	payload := &EmbeddingRequest{
 		Input: textChunks,
-		Model: "text-embedding-ada-002", // Specify the model
+		Model: "nomic-embed-text-v1.5.Q8_0.gguf",
 	}
 
 	// Send embedding request through the LLMClient
@@ -173,13 +173,9 @@ func CosineSimilarity(a, b []float64) float64 {
 		log.Fatal("Vectors must be of the same length")
 	}
 
-	a = NormalizeL2(a)
-	b = NormalizeL2(b)
-
 	var dotProduct, magnitudeA, magnitudeB float64
 	var wg sync.WaitGroup
 
-	// Adjust the number of partitions based on the number of CPU cores.
 	partitions := runtime.NumCPU()
 	partSize := len(a) / partitions
 
@@ -212,6 +208,7 @@ func CosineSimilarity(a, b []float64) float64 {
 		magnitudeB += result.magnitudeB
 	}
 
+	// Directly return cosine similarity without normalization
 	return dotProduct / (math.Sqrt(magnitudeA) * math.Sqrt(magnitudeB))
 }
 

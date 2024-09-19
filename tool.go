@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 
@@ -105,20 +106,18 @@ func (wm *WorkflowManager) Run(ctx context.Context, prompt string) (string, erro
 	// Get the list of enabled tools and print their names
 	log.Printf("Enabled tools: %v", wm.ListTools())
 
-	var result string
-	currentInput := prompt
 	for _, wrapper := range wm.tools {
-		processed, err := wrapper.Tool.Process(ctx, currentInput)
+		processed, err := wrapper.Tool.Process(ctx, prompt)
 		if err != nil {
-			return "", fmt.Errorf("error processing with tool %s: %w", wrapper.Name, err)
+			log.Printf("error processing with tool %s: %v", wrapper.Name, err)
 		}
-		result += processed
-		currentInput = processed
+
+		// Prepend the processed output to the prompt for the next tool without overwriting the original prompt
+		prompt = processed + "\n" + prompt
+
 	}
-	if result == "" {
-		return prompt, nil
-	}
-	return result, nil
+
+	return prompt, nil
 }
 
 // WebSearchTool is an existing tool for performing web searches.
@@ -295,21 +294,33 @@ func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
 	}
 	if topN, ok := params["top_n"].(int); ok {
 		t.topN = topN
+	} else {
+		t.topN = 3 // Default value
 	}
+
 	return nil
 }
 
 func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
 	req := new(RagRequest)
 	req.Text = input
-	req.TopN = 1
+	req.TopN = t.topN
+
+	log.Printf("Generating embeddings for input text: %s", input)
+
+	// Generate the embedding for the input text
+	inputEmbeddings, err := GenerateEmbedding(input)
+	if err != nil {
+		return "", fmt.Errorf("error generating embedding for input text: %v", err)
+	}
+	inputEmbedding := inputEmbeddings
+
+	// Print the input embedding for debugging
+	// log.Printf("Input embedding: %v", inputEmbedding)
 
 	// Create a Bleve match query for the input text
 	searchRequest := bleve.NewSearchRequest(bleve.NewMatchQuery(req.Text))
-	searchRequest.Size = req.TopN // Limit results to the topN documents
-
-	// Print the request for debugging
-	log.Printf("Search Request: %v", input)
+	//searchRequest.Size = req.TopN * 10 // Search with a larger size to filter later by similarity
 
 	// Perform the search
 	results, err := searchIndex.Search(searchRequest)
@@ -317,23 +328,21 @@ func (t *RetrievalTool) Process(ctx context.Context, input string) (string, erro
 		return "", err
 	}
 
-	// Print the results for debugging
-	log.Printf("Search results: %v", results)
-
-	// Prepare a response structure to hold results
+	// Prepare a structure to hold results
 	type SearchResult struct {
-		ID       string  `json:"id"`
-		Score    float64 `json:"score"`
-		Prompt   string  `json:"prompt"`
-		Response string  `json:"response"`
+		ID         string  `json:"id"`
+		Prompt     string  `json:"prompt"`
+		Response   string  `json:"response"`
+		Similarity float64 `json:"similarity"`
 	}
 	var searchResults []SearchResult
 
-	// Iterate over the search hits and retrieve the prompt and response fields
+	// Iterate over the search hits and generate embeddings for each document in real-time
 	for _, hit := range results.Hits {
+		log.Printf("Retrieving document %s", hit.ID)
 		doc, err := searchIndex.Document(hit.ID)
 		if err != nil {
-			fmt.Printf("Error retrieving document %s: %v\n", hit.ID, err)
+			log.Printf("Error retrieving document %s: %v", hit.ID, err)
 			continue
 		}
 
@@ -349,29 +358,59 @@ func (t *RetrievalTool) Process(ctx context.Context, input string) (string, erro
 			}
 			if fieldName == "response" {
 				response = fieldValue
+				log.Printf("Response: %s", response)
 			}
 		})
 
+		// Concatenate the prompt and response to generate the document content
+		docContent := prompt + "\n" + response
+
+		// Generate the embedding for the document's prompt (or any other content)
+		docEmbeddings, err := GenerateEmbedding(docContent)
+		if err != nil {
+			log.Printf("Error generating embedding for document %s: %v", hit.ID, err)
+			continue
+		}
+		docEmbedding := docEmbeddings
+
+		// Compute cosine similarity between the input embedding and document embedding
+		similarity := CosineSimilarity(inputEmbedding, docEmbedding)
+
 		// Append the search result to the response slice
 		searchResults = append(searchResults, SearchResult{
-			ID:       hit.ID,
-			Score:    hit.Score,
-			Prompt:   prompt,
-			Response: response,
+			ID:         hit.ID,
+			Prompt:     prompt,
+			Response:   response,
+			Similarity: similarity,
 		})
 	}
 
-	// Return the prompt + response for each document as a concatenated string
-	var response strings.Builder
+	// Sort the searchResults by similarity in descending order
+	sort.Slice(searchResults, func(i, j int) bool {
+		return searchResults[i].Similarity > searchResults[j].Similarity
+	})
+
+	// Print the document id and similarity for debugging
 	for _, sr := range searchResults {
-		response.WriteString(sr.Prompt)
-		response.WriteString("\n")
-		response.WriteString(sr.Response)
-		response.WriteString("\n\n")
+		log.Printf("Document ID: %s, Similarity: %f", sr.ID, sr.Similarity)
+	}
+
+	// Limit the results to the top N documents
+	if len(searchResults) > req.TopN {
+		searchResults = searchResults[:req.TopN]
+	}
+
+	// Return the prompt + response for each document as a concatenated string
+	var responseBuilder strings.Builder
+	for _, sr := range searchResults {
+		responseBuilder.WriteString(sr.Prompt)
+		responseBuilder.WriteString("\n")
+		responseBuilder.WriteString(sr.Response)
+		responseBuilder.WriteString("\n\n")
 	}
 
 	// Print the search results for debugging
-	log.Printf("Retrieval results: %s", searchResults)
+	log.Printf("Retrieval results: %v", searchResults)
 
-	return response.String(), nil
+	return responseBuilder.String(), nil
 }
