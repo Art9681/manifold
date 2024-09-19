@@ -15,11 +15,11 @@ type RagRequest struct {
 }
 
 // handleRagRequest accepts a text input and returns a json object of similar documents with similarity score
-func handleRagRequest(c echo.Context) error {
+func handleRagRequest(c echo.Context) (string, error) {
 	// Get the request body
 	req := new(RagRequest)
 	if err := c.Bind(req); err != nil {
-		return c.JSON(http.StatusBadRequest, err)
+		return "", c.JSON(http.StatusBadRequest, err)
 	}
 
 	// Create a Bleve match query for the input text
@@ -29,7 +29,7 @@ func handleRagRequest(c echo.Context) error {
 	// Perform the search
 	results, err := searchIndex.Search(searchRequest)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, err)
+		return "", c.JSON(http.StatusInternalServerError, err)
 	}
 
 	// Prepare a response structure to hold results
@@ -74,5 +74,5 @@ func handleRagRequest(c echo.Context) error {
 	}
 
 	// Return the JSON response with the top 3 documents
-	return c.JSON(http.StatusOK, searchResults)
+	return "", c.JSON(http.StatusOK, searchResults)
 }

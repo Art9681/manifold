@@ -11,6 +11,9 @@ import (
 	"sync"
 
 	"manifold/internal/web"
+
+	"github.com/blevesearch/bleve/v2"
+	index "github.com/blevesearch/bleve_index_api"
 )
 
 // Tool interface defines the contract for all tools.
@@ -49,7 +52,16 @@ func RegisterTools(wm *WorkflowManager, config *Config) error {
 			}
 		case "webget":
 			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
-				tool := NewWebGetTool()
+				tool := &WebGetTool{}
+				err := tool.SetParams(toolConfig.Parameters)
+				if err != nil {
+					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
+				}
+				wm.AddTool(tool, toolConfig.Name)
+			}
+		case "retrieval":
+			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
+				tool := &RetrievalTool{}
 				err := tool.SetParams(toolConfig.Parameters)
 				if err != nil {
 					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
@@ -223,13 +235,6 @@ type WebGetTool struct {
 	// Additional parameters can be added here if needed
 }
 
-// NewWebGetTool creates a new instance of WebGetTool with default settings.
-func NewWebGetTool() *WebGetTool {
-	return &WebGetTool{
-		enabled: false,
-	}
-}
-
 // Process parses URLs from the input, fetches their HTML content, and extracts relevant information.
 func (t *WebGetTool) Process(ctx context.Context, input string) (string, error) {
 	// Extract URLs from the input using internal/web's ExtractURLs function
@@ -269,4 +274,104 @@ func (t *WebGetTool) SetParams(params map[string]interface{}) error {
 	}
 	// Additional parameters can be set here if needed
 	return nil
+}
+
+type RetrievalTool struct {
+	enabled  bool
+	endpoint string
+	topN     int
+}
+
+func (t *RetrievalTool) Enabled() bool {
+	return t.enabled
+}
+
+func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
+	if enabled, ok := params["enabled"].(bool); ok {
+		t.enabled = enabled
+	}
+	if endpoint, ok := params["endpoint"].(string); ok {
+		t.endpoint = endpoint
+	}
+	if topN, ok := params["top_n"].(int); ok {
+		t.topN = topN
+	}
+	return nil
+}
+
+func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
+	req := new(RagRequest)
+	req.Text = input
+	req.TopN = 1
+
+	// Create a Bleve match query for the input text
+	searchRequest := bleve.NewSearchRequest(bleve.NewMatchQuery(req.Text))
+	searchRequest.Size = req.TopN // Limit results to the topN documents
+
+	// Print the request for debugging
+	log.Printf("Search Request: %v", input)
+
+	// Perform the search
+	results, err := searchIndex.Search(searchRequest)
+	if err != nil {
+		return "", err
+	}
+
+	// Print the results for debugging
+	log.Printf("Search results: %v", results)
+
+	// Prepare a response structure to hold results
+	type SearchResult struct {
+		ID       string  `json:"id"`
+		Score    float64 `json:"score"`
+		Prompt   string  `json:"prompt"`
+		Response string  `json:"response"`
+	}
+	var searchResults []SearchResult
+
+	// Iterate over the search hits and retrieve the prompt and response fields
+	for _, hit := range results.Hits {
+		doc, err := searchIndex.Document(hit.ID)
+		if err != nil {
+			fmt.Printf("Error retrieving document %s: %v\n", hit.ID, err)
+			continue
+		}
+
+		var prompt, response string
+
+		// Visit each field in the document and capture the "prompt" and "response" fields
+		doc.VisitFields(func(field index.Field) {
+			fieldName := field.Name()
+			fieldValue := string(field.Value())
+
+			if fieldName == "prompt" {
+				prompt = fieldValue
+			}
+			if fieldName == "response" {
+				response = fieldValue
+			}
+		})
+
+		// Append the search result to the response slice
+		searchResults = append(searchResults, SearchResult{
+			ID:       hit.ID,
+			Score:    hit.Score,
+			Prompt:   prompt,
+			Response: response,
+		})
+	}
+
+	// Return the prompt + response for each document as a concatenated string
+	var response strings.Builder
+	for _, sr := range searchResults {
+		response.WriteString(sr.Prompt)
+		response.WriteString("\n")
+		response.WriteString(sr.Response)
+		response.WriteString("\n\n")
+	}
+
+	// Print the search results for debugging
+	log.Printf("Retrieval results: %s", searchResults)
+
+	return response.String(), nil
 }

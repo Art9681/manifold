@@ -43,7 +43,10 @@ func setupRoutes(e *echo.Echo, config *Config) {
 
 	// RAG endpoints
 	e.POST("/v1/embeddings", handleEmbeddingRequest)
-	e.POST("/v1/rag", handleRagRequest)
+	e.POST("/v1/rag", func(c echo.Context) error {
+		_, err := handleRagRequest(c)
+		return err
+	})
 
 	// tool routes
 	//e.GET("/v1/tools", handleRenderTools)
