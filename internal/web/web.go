@@ -24,6 +24,7 @@ import (
 
 // List of unwanted URLs to filter out from search results
 var unwantedURLs = []string{
+	"search.intelligence.dev",
 	"web.archive.org",
 	"www.youtube.com",
 	"www.youtube.com/watch",
@@ -272,7 +273,6 @@ func GetSearXNGResults(endpoint string, query string) []string {
 	return urls
 }
 
-// PostRequest sends a POST request to the given endpoint with a named parameter 'q' and returns the response body as a string.
 // PostRequest sends a POST request to the given endpoint with a named parameter 'q' and returns the response body as a string.
 func PostRequest(endpoint string, queryParam string) (string, error) {
 	// Create the form data

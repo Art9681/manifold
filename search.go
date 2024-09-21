@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/blevesearch/bleve/v2"
@@ -155,29 +156,6 @@ func (idx *Index) FacetedSearch(query string, facetField string) (*bleve.SearchR
 	return idx.bleveIndex.Search(searchRequest)
 }
 
-// BoostedSearch performs a search and boosts documents that match a particular field or criteria.
-func (idx *Index) BoostedSearch(query string, boostField string, boostValue float64) (*bleve.SearchResult, error) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	if idx.closed {
-		return nil, errors.New("index is closed")
-	}
-
-	// Create a boosted query
-	mainQuery := bleve.NewMatchQuery(query)
-	boostedQuery := bleve.NewQueryStringQuery(boostField)
-	boostedQuery.SetBoost(boostValue)
-
-	// Combine both queries
-	booleanQuery := bleve.NewBooleanQuery()
-	booleanQuery.AddMust(mainQuery)
-	booleanQuery.AddShould(boostedQuery)
-
-	searchRequest := bleve.NewSearchRequest(booleanQuery)
-	return idx.bleveIndex.Search(searchRequest)
-}
-
 // DynamicQuery allows constructing queries with different conditions.
 func (idx *Index) DynamicQuery(match string, rangeField string, start, end interface{}) (*bleve.SearchResult, error) {
 	idx.mu.Lock()
@@ -205,8 +183,33 @@ func (idx *Index) DynamicQuery(match string, rangeField string, start, end inter
 	return idx.bleveIndex.Search(searchRequest)
 }
 
+func (idx *Index) BoostedSearch(query string, boostField string, boostValue float64) (*bleve.SearchResult, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	if idx.closed {
+		return nil, errors.New("index is closed")
+	}
+
+	// Create a boosted query
+	mainQuery := bleve.NewMatchQuery(query)
+	boostedQuery := bleve.NewQueryStringQuery(boostField)
+	boostedQuery.SetBoost(boostValue)
+
+	// Combine both queries
+	booleanQuery := bleve.NewBooleanQuery()
+	booleanQuery.AddMust(mainQuery)
+	booleanQuery.AddShould(boostedQuery)
+
+	searchRequest := bleve.NewSearchRequest(booleanQuery)
+	searchRequest.Size = 10 // Adjust as needed
+	searchRequest.Highlight = bleve.NewHighlight()
+
+	return idx.bleveIndex.Search(searchRequest)
+}
+
 func ExpandQueryWithSynonyms(queryStr string, synonyms map[string][]string) query.Query {
-	matchQuery := bleve.NewMatchQuery(queryStr)
+	matchQuery := query.NewMatchQuery(queryStr)
 	booleanQuery := bleve.NewBooleanQuery()
 
 	// Add the original query
@@ -214,15 +217,40 @@ func ExpandQueryWithSynonyms(queryStr string, synonyms map[string][]string) quer
 
 	// Add queries for synonyms
 	for word, synonymList := range synonyms {
-		if word == queryStr {
+		if strings.Contains(queryStr, word) {
 			for _, synonym := range synonymList {
 				synonymQuery := bleve.NewMatchQuery(synonym)
+				synonymQuery.SetBoost(0.5) // Lower boost for synonyms
 				booleanQuery.AddShould(synonymQuery)
 			}
 		}
 	}
 
 	return booleanQuery
+}
+
+// New function to combine BoostedSearch and ExpandQueryWithSynonyms
+func (idx *Index) EnhancedRAGSearch(query string, boostField string, boostValue float64, synonyms map[string][]string) (*bleve.SearchResult, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	if idx.closed {
+		return nil, errors.New("index is closed")
+	}
+
+	expandedQuery := ExpandQueryWithSynonyms(query, synonyms)
+	boostedQuery := bleve.NewQueryStringQuery(boostField)
+	boostedQuery.SetBoost(boostValue)
+
+	booleanQuery := bleve.NewBooleanQuery()
+	booleanQuery.AddMust(expandedQuery)
+	booleanQuery.AddShould(boostedQuery)
+
+	searchRequest := bleve.NewSearchRequest(booleanQuery)
+	searchRequest.Size = 10 // Adjust as needed
+	searchRequest.Highlight = bleve.NewHighlight()
+
+	return idx.bleveIndex.Search(searchRequest)
 }
 
 type Cache struct {
@@ -249,24 +277,58 @@ func (cache *Cache) StoreResult(query string, result *bleve.SearchResult) {
 
 // Create a new document mapping with stored fields
 func createMapping() *mapping.IndexMappingImpl {
+	// Define a document mapping for "chatdoc"
+	chatDocMapping := bleve.NewDocumentMapping()
+
+	// Define a field mapping for "prompt" and "response" fields
+	textFieldMapping := bleve.NewTextFieldMapping()
+	textFieldMapping.Store = true          // Store the field for later retrieval
+	textFieldMapping.Index = true          // Index the field for searchability
+	textFieldMapping.Analyzer = "standard" // Use a standard text analyzer
+
+	// Add the field mappings to the chat turn document mapping
+	chatDocMapping.AddFieldMappingsAt("prompt", textFieldMapping)
+	chatDocMapping.AddFieldMappingsAt("response", textFieldMapping)
+
+	// Create a new index mapping and add the chat document type
+	indexMapping := bleve.NewIndexMapping()
+	indexMapping.AddDocumentMapping("chatdoc", chatDocMapping)
+
+	return indexMapping
+}
+
+func createCustomAnalyzer() *mapping.IndexMappingImpl {
+	// Define a document mapping
 	docMapping := bleve.NewDocumentMapping()
 
-	// Define a field mapping for the prompt and response
+	// Create a custom analyzer for mixed content (text + code + HTML/Markdown)
+	analyzer := map[string]interface{}{
+		"type":         "custom",
+		"tokenizer":    "unicode",        // Use unicode tokenizer for text and code
+		"char_filters": []string{"html"}, // Strip HTML tags and markdown
+		"token_filters": []string{
+			"lowercase", // Apply lowercase to natural language, not code
+			"en_stop",   // Stop-word removal for English language
+			"porter",    // English stemming (e.g., running -> run)
+		},
+	}
+
+	// Field mapping for the prompt and response fields
 	textFieldMapping := bleve.NewTextFieldMapping()
-	textFieldMapping.Store = true // Ensure the field is stored for retrieval
+	textFieldMapping.Analyzer = "custom" // Use the custom analyzer for both fields
+	textFieldMapping.Store = true
+	textFieldMapping.Index = true
 
-	// Define a field mapping for chunk content
-	chunkFieldMapping := bleve.NewTextFieldMapping()
-	chunkFieldMapping.Store = true
-
-	// Add field mappings to the document mapping
+	// Add field mappings for prompt and response
 	docMapping.AddFieldMappingsAt("prompt", textFieldMapping)
 	docMapping.AddFieldMappingsAt("response", textFieldMapping)
-	//docMapping.AddFieldMappingsAt("chunk", chunkFieldMapping)
 
-	// Create an index mapping and add the document mapping
+	// Create and return the index mapping
 	indexMapping := bleve.NewIndexMapping()
 	indexMapping.AddDocumentMapping("chatdoc", docMapping)
+
+	// Register the custom analyzer
+	indexMapping.AddCustomAnalyzer("custom", analyzer)
 
 	return indexMapping
 }

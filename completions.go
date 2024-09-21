@@ -344,6 +344,9 @@ func SaveChatTurn(prompt, response, timestamp string) error {
 		Response: response,
 	}
 
+	// Print the ChatDocument
+	log.Printf("ChatDocument: %v", doc)
+
 	err := searchIndex.Index(doc.ID, doc)
 	if err != nil {
 		log.Printf("Error indexing document in Bleve: %v", err)

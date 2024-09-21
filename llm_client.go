@@ -29,7 +29,7 @@ func (client *Client) SendEmbeddingRequest(payload *EmbeddingRequest) (*http.Res
 		return nil, err
 	}
 
-	url := client.BaseURL + "/embeddings"
+	url := "http://localhost:32184/v1/embeddings"
 
 	fmt.Println("Sending embedding request to:", url)
 

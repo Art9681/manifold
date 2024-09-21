@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"manifold/internal/documents"
 	"manifold/internal/web"
 
 	"github.com/blevesearch/bleve/v2"
@@ -137,18 +138,18 @@ func (t *WebSearchTool) Process(ctx context.Context, input string) (string, erro
 	// Perform search using GetSearXNGResults
 	urls := web.GetSearXNGResults(t.Endpoint, input)
 
-	// Remove unwanted URLs (already done in GetSearXNGResults, but double-checking)
-	urls = web.RemoveUnwantedURLs(urls)
-
 	if len(urls) == 0 {
 		return "", errors.New("no URLs found after filtering")
+	} else {
+		// Only return the topN URLs
+		if t.TopN > len(urls) {
+			t.TopN = len(urls)
+		}
+		urls = urls[:t.TopN]
 	}
 
-	// Limit to TopN
-	if t.TopN > len(urls) {
-		t.TopN = len(urls)
-	}
-	topURLs := urls[:t.TopN]
+	// Print the URLs for debugging
+	log.Printf("URLs: %v", urls)
 
 	// Fetch contents concurrently
 	type result struct {
@@ -162,7 +163,7 @@ func (t *WebSearchTool) Process(ctx context.Context, input string) (string, erro
 	// Semaphore to limit concurrency
 	semaphore := make(chan struct{}, t.Concurrency)
 
-	for _, u := range topURLs {
+	for _, u := range urls {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
@@ -188,6 +189,9 @@ func (t *WebSearchTool) Process(ctx context.Context, input string) (string, erro
 	var aggregatedContent strings.Builder
 	for res := range resultsChan {
 		if res.err == nil && res.content != "" {
+			// Store the fetched content in the search index
+			searchIndex.Index("search_result", res.content)
+
 			aggregatedContent.WriteString(res.content)
 			aggregatedContent.WriteString("\n") // Separator between contents
 		}
@@ -254,6 +258,10 @@ func (t *WebGetTool) Process(ctx context.Context, input string) (string, error) 
 			log.Printf("Failed to fetch content from URL %s: %v", u, err)
 			continue
 		}
+
+		// Store the fetched content in the search index
+		searchIndex.Index(u, content)
+
 		aggregatedContent.WriteString(content)
 		aggregatedContent.WriteString("\n") // Separator between contents
 	}
@@ -323,6 +331,11 @@ func (t *RetrievalTool) Process(ctx context.Context, input string) (string, erro
 	//searchRequest.Size = req.TopN * 10 // Search with a larger size to filter later by similarity
 
 	// Perform the search
+	// results, err := searchIndex.Search(searchRequest)
+	// if err != nil {
+	// 	return "", err
+	// }
+
 	results, err := searchIndex.Search(searchRequest)
 	if err != nil {
 		return "", err
@@ -365,24 +378,32 @@ func (t *RetrievalTool) Process(ctx context.Context, input string) (string, erro
 		// Concatenate the prompt and response to generate the document content
 		docContent := prompt + "\n" + response
 
-		// Generate the embedding for the document's prompt (or any other content)
-		docEmbeddings, err := GenerateEmbedding(docContent)
-		if err != nil {
-			log.Printf("Error generating embedding for document %s: %v", hit.ID, err)
-			continue
+		// Split the document content into chunks of 1024 tokens
+		docChunks := documents.SplitTextByCount(docContent, 1024)
+
+		for _, chunk := range docChunks {
+			chunkEmbeddings, err := GenerateEmbedding(chunk)
+			if err != nil {
+				log.Printf("Error generating embedding for document chunk: %v", err)
+				continue
+			}
+
+			// calculate the similarity between the input and the chunk
+			similarity := CosineSimilarity(inputEmbedding, chunkEmbeddings)
+
+			// Print the similarity for debugging
+			log.Printf("Similarity between input and chunk: %f", similarity)
+
+			// If the similarity is above a certain threshold, add the chunk to the search results
+			if similarity > 0.7 {
+				searchResults = append(searchResults, SearchResult{
+					ID:         hit.ID,
+					Prompt:     prompt,
+					Response:   response,
+					Similarity: similarity,
+				})
+			}
 		}
-		docEmbedding := docEmbeddings
-
-		// Compute cosine similarity between the input embedding and document embedding
-		similarity := CosineSimilarity(inputEmbedding, docEmbedding)
-
-		// Append the search result to the response slice
-		searchResults = append(searchResults, SearchResult{
-			ID:         hit.ID,
-			Prompt:     prompt,
-			Response:   response,
-			Similarity: similarity,
-		})
 	}
 
 	// Sort the searchResults by similarity in descending order
@@ -396,8 +417,8 @@ func (t *RetrievalTool) Process(ctx context.Context, input string) (string, erro
 	}
 
 	// Limit the results to the top N documents
-	if len(searchResults) > req.TopN {
-		searchResults = searchResults[:req.TopN]
+	if len(searchResults) > 3 {
+		searchResults = searchResults[:3]
 	}
 
 	// Return the prompt + response for each document as a concatenated string
