@@ -1,3 +1,5 @@
+// internal/documents/gitloader.go - Package documents provides functionality to load documents from a Git repository.
+
 package documents
 
 import (

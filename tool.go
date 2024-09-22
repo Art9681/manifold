@@ -325,8 +325,19 @@ func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
 	return nil
 }
 
-// StoreDocument stores a document's content and its embedding in Badger.
+// StoreDocument stores a document's content and its embedding in Badger if it's not redundant.
 func (t *RetrievalTool) StoreDocument(docID string, content string, embedding []float64) error {
+	// Check if this document is too similar to existing ones.
+	isRedundant, err := t.IsRedundant(embedding)
+	if err != nil {
+		return err
+	}
+
+	if isRedundant {
+		log.Printf("Document is too similar to existing documents, skipping storage.")
+		return nil
+	}
+
 	// Serialize the content and embedding
 	data := struct {
 		Content   string    `json:"content"`
@@ -345,6 +356,43 @@ func (t *RetrievalTool) StoreDocument(docID string, content string, embedding []
 	return t.db.Update(func(txn *badger.Txn) error {
 		return txn.Set([]byte(docID), dataBytes)
 	})
+}
+
+// IsRedundant checks if the given embedding is too similar to existing embeddings.
+func (t *RetrievalTool) IsRedundant(newEmbedding []float64) (bool, error) {
+	var isRedundant bool
+	similarityThreshold := 0.7 // Set the similarity threshold for deduplication
+
+	err := t.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+
+			var data struct {
+				Embedding []float64 `json:"embedding"`
+			}
+
+			err := item.Value(func(val []byte) error {
+				return json.Unmarshal(val, &data)
+			})
+			if err != nil {
+				return err
+			}
+
+			// Calculate similarity between newEmbedding and the stored embedding
+			similarity := CosineSimilarity(newEmbedding, data.Embedding)
+			if similarity >= similarityThreshold {
+				isRedundant = true
+				return nil // Exit early if redundancy is found
+			}
+		}
+		return nil
+	})
+
+	return isRedundant, err
 }
 
 func (t *RetrievalTool) RetrieveDocuments(ctx context.Context, input string) (string, error) {
@@ -416,8 +464,8 @@ func (t *RetrievalTool) RetrieveDocuments(ctx context.Context, input string) (st
 	})
 
 	// Limit the results to the top N documents
-	if len(searchResults) > t.topN {
-		searchResults = searchResults[:t.topN]
+	if len(searchResults) > 3 {
+		searchResults = searchResults[:3]
 	}
 
 	// Concatenate the content of the top N results
