@@ -21,8 +21,7 @@ type StoreDocumentRequest struct {
 func sendDocumentToEndpoint(doc documents.Document) error {
 	url := "http://localhost:32180/v1/store-document"
 	reqBody := StoreDocumentRequest{
-		Text:     doc.PageContent,
-		Metadata: doc.Metadata,
+		Text: doc.PageContent,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
