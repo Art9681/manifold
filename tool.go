@@ -14,11 +14,8 @@ import (
 	"strings"
 	"sync"
 
-	"manifold/internal/documents"
 	"manifold/internal/web"
 
-	"github.com/blevesearch/bleve/v2"
-	index "github.com/blevesearch/bleve_index_api"
 	badger "github.com/dgraph-io/badger/v4"
 )
 
@@ -297,21 +294,15 @@ func (t *WebGetTool) SetParams(params map[string]interface{}) error {
 }
 
 type RetrievalTool struct {
-	enabled  bool
-	endpoint string
-	topN     int
+	enabled bool
+	db      *badger.DB
+	topN    int
 }
 
-func (t *RetrievalTool) Enabled() bool {
-	return t.enabled
-}
-
+// SetParams configures the tool with provided parameters.
 func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
 	if enabled, ok := params["enabled"].(bool); ok {
 		t.enabled = enabled
-	}
-	if endpoint, ok := params["endpoint"].(string); ok {
-		t.endpoint = endpoint
 	}
 	if topN, ok := params["top_n"].(int); ok {
 		t.topN = topN
@@ -319,190 +310,99 @@ func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
 		t.topN = 3 // Default value
 	}
 
+	// Initialize Badger database
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	badgerDbPath := filepath.Join(home, ".manifold/badger")
+	opts := badger.DefaultOptions(badgerDbPath)
+	t.db, err = badger.Open(opts)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
-	req := new(RagRequest)
-	req.Text = input
-	req.TopN = t.topN
-
-	log.Printf("Checking if embedding for input text exists in Badger KV store")
-
-	// First, try to retrieve the embedding from Badger
-	badgerTool := &BadgerTool{}
-	inputEmbedding, err := badgerTool.GetEmbedding("input_key")
-	if err != nil {
-		log.Printf("Embedding not found in Badger, generating a new one")
-		// If not found, generate a new embedding
-		inputEmbedding, err = GenerateEmbedding(input)
-		if err != nil {
-			return "", fmt.Errorf("error generating embedding for input text: %v", err)
-		}
-		// Store the new embedding in Badger
-		err = badgerTool.StoreEmbedding("input_key", inputEmbedding)
-		if err != nil {
-			return "", fmt.Errorf("error storing embedding in Badger: %v", err)
-		}
+// StoreDocument stores a document's content and its embedding in Badger.
+func (t *RetrievalTool) StoreDocument(docID string, content string, embedding []float64) error {
+	// Serialize the content and embedding
+	data := struct {
+		Content   string    `json:"content"`
+		Embedding []float64 `json:"embedding"`
+	}{
+		Content:   content,
+		Embedding: embedding,
 	}
 
-	// Print the input embedding for debugging
-	// log.Printf("Input embedding: %v", inputEmbedding)
-
-	// Create a Bleve match query for the input text
-	searchRequest := bleve.NewSearchRequest(bleve.NewMatchQuery(req.Text))
-	//searchRequest.Size = req.TopN * 10 // Search with a larger size to filter later by similarity
-
-	// Perform the search
-	// results, err := searchIndex.Search(searchRequest)
-	// if err != nil {
-	// 	return "", err
-	// }
-
-	results, err := searchIndex.Search(searchRequest)
+	dataBytes, err := json.Marshal(data)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	// Prepare a structure to hold results
-	type SearchResult struct {
+	// Store in Badger
+	return t.db.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte(docID), dataBytes)
+	})
+}
+
+func (t *RetrievalTool) RetrieveDocuments(ctx context.Context, input string) (string, error) {
+	// Generate the embedding for the input text
+	inputEmbedding, err := GenerateEmbedding(input)
+	if err != nil {
+		return "", fmt.Errorf("error generating embedding for input text: %v", err)
+	}
+
+	// Iterate over all stored documents in Badger and calculate similarity
+	var searchResults []struct {
 		ID         string  `json:"id"`
-		Prompt     string  `json:"prompt"`
-		Response   string  `json:"response"`
+		Content    string  `json:"content"`
 		Similarity float64 `json:"similarity"`
 	}
-	var searchResults []SearchResult
 
-	// Iterate over the search hits and generate embeddings for each document in real-time
-	for _, hit := range results.Hits {
-		log.Printf("Retrieving document %s", hit.ID)
-		doc, err := searchIndex.Document(hit.ID)
-		if err != nil {
-			log.Printf("Error retrieving document %s: %v", hit.ID, err)
-			continue
-		}
+	err = t.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(opts)
+		defer it.Close()
 
-		var prompt, response string
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			key := item.Key()
 
-		// Visit each field in the document and capture the "prompt" and "response" fields
-		doc.VisitFields(func(field index.Field) {
-			fieldName := field.Name()
-			fieldValue := string(field.Value())
-
-			if fieldName == "prompt" {
-				prompt = fieldValue
+			var data struct {
+				Content   string    `json:"content"`
+				Embedding []float64 `json:"embedding"`
 			}
-			if fieldName == "response" {
-				response = fieldValue
-				log.Printf("Response: %s", response)
-			}
-		})
 
-		// Concatenate the prompt and response to generate the document content
-		docContent := prompt + "\n" + response
-
-		// Split the document content into chunks of 1024 tokens
-		docChunks := documents.SplitTextByCount(docContent, 1024)
-
-		for _, chunk := range docChunks {
-			chunkEmbeddings, err := GenerateEmbedding(chunk)
+			err := item.Value(func(val []byte) error {
+				return json.Unmarshal(val, &data)
+			})
 			if err != nil {
-				log.Printf("Error generating embedding for document chunk: %v", err)
-				continue
+				return err
 			}
 
-			// calculate the similarity between the input and the chunk
-			similarity := CosineSimilarity(inputEmbedding, chunkEmbeddings)
+			// Calculate similarity between the input embedding and the document embedding
+			similarity := CosineSimilarity(inputEmbedding, data.Embedding)
 
-			// Print the similarity for debugging
-			log.Printf("Similarity between input and chunk: %f", similarity)
+			// Print the similarity and content for debugging
+			log.Printf("Similarity with document ID %s: %f", key, similarity)
 
-			// If the similarity is above a certain threshold, add the chunk to the search results
-			if similarity > 0.7 {
-				searchResults = append(searchResults, SearchResult{
-					ID:         hit.ID,
-					Prompt:     prompt,
-					Response:   response,
+			if similarity > 0.5 { // Threshold can be adjusted
+				searchResults = append(searchResults, struct {
+					ID         string  `json:"id"`
+					Content    string  `json:"content"`
+					Similarity float64 `json:"similarity"`
+				}{
+					ID:         string(key),
+					Content:    data.Content,
 					Similarity: similarity,
 				})
 			}
+
+			// Print the search results for debugging
+			log.Printf("Search results: %v", searchResults)
 		}
-	}
-
-	// Sort the searchResults by similarity in descending order
-	sort.Slice(searchResults, func(i, j int) bool {
-		return searchResults[i].Similarity > searchResults[j].Similarity
-	})
-
-	// Print the document id and similarity for debugging
-	for _, sr := range searchResults {
-		log.Printf("Document ID: %s, Similarity: %f", sr.ID, sr.Similarity)
-	}
-
-	// Limit the results to the top N documents
-	if len(searchResults) > 3 {
-		searchResults = searchResults[:3]
-	}
-
-	// Return the prompt + response for each document as a concatenated string
-	var responseBuilder strings.Builder
-	for _, sr := range searchResults {
-		responseBuilder.WriteString(sr.Prompt)
-		responseBuilder.WriteString("\n")
-		responseBuilder.WriteString(sr.Response)
-		responseBuilder.WriteString("\n\n")
-	}
-
-	// Print the search results for debugging
-	log.Printf("Retrieval results: %v", searchResults)
-
-	return responseBuilder.String(), nil
-}
-
-type BadgerTool struct {
-	db      *badger.DB
-	enabled bool
-}
-
-// Process manages the Badger store, storing embeddings and retrieving them during the process.
-func (t *BadgerTool) Process(ctx context.Context, input string) (string, error) {
-	// Open Badger database
-	// Get user home directory
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	badgerDbPath := filepath.Join(home, ".manifold/badger")
-	opts := badger.DefaultOptions(badgerDbPath)
-	db, err := badger.Open(opts)
-	if err != nil {
-		return "", err
-	}
-	defer db.Close()
-
-	// Save the input (for example purposes, we store the input as the key and its length as a value)
-	err = db.Update(func(txn *badger.Txn) error {
-		err := txn.Set([]byte("input_key"), []byte(input))
-		return err
-	})
-
-	if err != nil {
-		return "", err
-	}
-
-	// Read the value back
-	var result string
-	err = db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte("input_key"))
-		if err != nil {
-			return err
-		}
-		val, err := item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-		result = string(val)
 		return nil
 	})
 
@@ -510,13 +410,52 @@ func (t *BadgerTool) Process(ctx context.Context, input string) (string, error) 
 		return "", err
 	}
 
-	return result, nil
+	// Sort the search results by similarity in descending order
+	sort.Slice(searchResults, func(i, j int) bool {
+		return searchResults[i].Similarity > searchResults[j].Similarity
+	})
+
+	// Limit the results to the top N documents
+	if len(searchResults) > t.topN {
+		searchResults = searchResults[:t.topN]
+	}
+
+	// Concatenate the content of the top N results
+	var resultBuilder strings.Builder
+	for _, result := range searchResults {
+		resultBuilder.WriteString(fmt.Sprintf("Document ID: %s\n", result.ID))
+		resultBuilder.WriteString(result.Content)
+		resultBuilder.WriteString("\n\n")
+	}
+
+	return resultBuilder.String(), nil
+}
+
+// Process is the main method that processes the input using Badger.
+func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
+	// Try to retrieve similar documents based on the input embedding
+	return t.RetrieveDocuments(ctx, input)
+}
+
+// Enabled returns the enabled status of the tool.
+func (t *RetrievalTool) Enabled() bool {
+	return t.enabled
+}
+
+type BadgerTool struct {
+	db      *badger.DB
+	enabled bool
+}
+
+func (t *BadgerTool) Process(ctx context.Context, input string) (string, error) {
+	// BadgerTool may not need to process inputs directly.
+	// You can either log an action or return a simple message indicating it's a store tool.
+	log.Println("BadgerTool does not perform direct processing.")
+	return input, nil
 }
 
 // StoreEmbedding stores the embedding in Badger with the document ID as the key.
-func (t *BadgerTool) StoreEmbedding(docID string, embedding []float64) error {
-	// Open Badger database
-	// Get user home directory
+func (t *BadgerTool) StoreEmbedding(docID string, embedding []float64, content string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -530,34 +469,46 @@ func (t *BadgerTool) StoreEmbedding(docID string, embedding []float64) error {
 	}
 	defer db.Close()
 
-	// Serialize the embedding
-	embeddingBytes, err := json.Marshal(embedding)
-	if err != nil {
-		return err
+	// Serialize the content and embedding
+	data := struct {
+		Content   string    `json:"content"`
+		Embedding []float64 `json:"embedding"`
+	}{
+		Content:   content,
+		Embedding: embedding,
 	}
+
+	dataBytes, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("error marshalling embedding data: %v", err)
+	}
+
+	// Log the data being stored for debugging
+	log.Printf("Storing document ID %s with data: %s", docID, string(dataBytes))
 
 	// Store the embedding using docID as the key
 	return db.Update(func(txn *badger.Txn) error {
-		return txn.Set([]byte(docID), embeddingBytes)
+		return txn.Set([]byte(docID), dataBytes)
 	})
 }
 
 // GetEmbedding retrieves the embedding from Badger using the document ID.
-func (t *BadgerTool) GetEmbedding(docID string) ([]float64, error) {
-	var embedding []float64
+func (t *BadgerTool) GetEmbedding(docID string) (string, []float64, error) {
+	var data struct {
+		Content   string    `json:"content"`
+		Embedding []float64 `json:"embedding"`
+	}
 
-	// Open Badger database
-	// Get user home directory
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 
 	badgerDbPath := filepath.Join(home, ".manifold/badger")
 	opts := badger.DefaultOptions(badgerDbPath)
 	db, err := badger.Open(opts)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	defer db.Close()
 
@@ -567,19 +518,23 @@ func (t *BadgerTool) GetEmbedding(docID string) ([]float64, error) {
 		if err != nil {
 			return err
 		}
-		embeddingBytes, err := item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-		err = json.Unmarshal(embeddingBytes, &embedding)
-		return err
+
+		// Print the data being retrieved for debugging
+		log.Printf("Retrieving document ID %s", docID)
+
+		// Print the item value for debugging
+		log.Printf("Item value: %v", item)
+
+		return item.Value(func(val []byte) error {
+			return json.Unmarshal(val, &data)
+		})
 	})
 
 	if err != nil {
-		return nil, err
+		return "", nil, fmt.Errorf("error unmarshalling embedding data: %v", err)
 	}
 
-	return embedding, nil
+	return data.Content, data.Embedding, nil
 }
 
 // SetParams configures the tool with provided parameters.

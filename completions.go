@@ -1,3 +1,5 @@
+// completions.go
+
 package main
 
 import (
@@ -330,33 +332,35 @@ func handleGetAllChatRoles(c echo.Context, config *Config) error {
 	return c.JSON(http.StatusOK, rolesMap)
 }
 
+// SaveChatTurn stores the chat turn's prompt and response in the Badger KV store.
 func SaveChatTurn(prompt, response, timestamp string) error {
 	// Concatenate the prompt and response
 	concatenatedText := fmt.Sprintf("User: %s\nAssistant: %s", prompt, response)
 
-	// Split the concatenated text into chunks of 500 characters
+	// Split the concatenated text into chunks of 1000 tokens
 	chunks := documents.SplitTextByCount(concatenatedText, 500)
 
-	// Store the concatenated text in the Bleve search index
-	doc := ChatDocument{
-		ID:       fmt.Sprintf("%d", time.Now().UnixNano()),
-		Prompt:   prompt,
-		Response: response,
+	// Create a unique chat turn ID
+	chatTurnID := fmt.Sprintf("chatturn-%d", time.Now().UnixNano())
+
+	// Find the RetrievalTool within the WorkflowManager
+	var retrievalTool *RetrievalTool
+	for _, tool := range globalWM.tools {
+		if tool.Name == "retrieval" {
+			var ok bool
+			retrievalTool, ok = tool.Tool.(*RetrievalTool)
+			if !ok {
+				return fmt.Errorf("retrieval tool type assertion failed")
+			}
+			break
+		}
 	}
 
-	// Print the ChatDocument
-	log.Printf("ChatDocument: %v", doc)
-
-	err := searchIndex.Index(doc.ID, doc)
-	if err != nil {
-		log.Printf("Error indexing document in Bleve: %v", err)
-		// Continue even if indexing fails
+	if retrievalTool == nil {
+		return fmt.Errorf("retrieval tool not found in WorkflowManager")
 	}
 
-	// Save chunks to the edata database
-	embeddingsStore := NewEmbeddingDB()
-
-	// var previousDocID uint
+	// Iterate over each chunk, generate embeddings, and store in Badger
 	for _, chunk := range chunks {
 		embeddings, err := GenerateEmbedding(chunk)
 		if err != nil {
@@ -364,33 +368,19 @@ func SaveChatTurn(prompt, response, timestamp string) error {
 			continue
 		}
 
-		docEmbeddings := Embeddings{
-			Word:       chunk,
-			Vector:     embeddings,
-			Similarity: 0.0,
+		docID := fmt.Sprintf("%s-%d", chatTurnID, time.Now().UnixNano())
+
+		// Store the document and its embedding in Badger
+		err = retrievalTool.StoreDocument(docID, chunk, embeddings)
+		if err != nil {
+			log.Printf("Error storing document in Badger: %v", err)
+			continue
 		}
-
-		embeddingsStore.AddEmbedding(docEmbeddings)
-
-		// Save the chunk as a document in edata
-		// doc, err := edata.SaveDocument(chunk, embeddings)
-		// if err != nil {
-		// 	log.Printf("Error saving chunk to edata database: %v", err)
-		// 	continue
-		// }
-
-		// If there is a previous document, create a graph edge
-		// if previousDocID != 0 {
-		// 	err := edata.AddGraphEdge(previousDocID, doc.ID)
-		// 	if err != nil {
-		// 		log.Printf("Error adding graph edge between documents %d and %d: %v", previousDocID, doc.ID, err)
-		// 	}
-		// }
-
-		// previousDocID = doc.ID
 	}
 
-	embeddingsStore.SaveEmbeddings("./embeddings.json")
+	if retrievalTool == nil {
+		return fmt.Errorf("retrieval tool not found in WorkflowManager")
+	}
 
 	return nil
 }
@@ -407,22 +397,19 @@ func GenerateEmbedding(text string) ([]float64, error) {
 	resp, err := llmClient.SendEmbeddingRequest(&embeddingRequest)
 	if err != nil {
 		log.Printf("Error sending embedding request: %v", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	var embeddingResponse EmbeddingResponse
 	if err := json.NewDecoder(resp.Body).Decode(&embeddingResponse); err != nil {
 		log.Printf("Error decoding embedding response: %v", err)
+		return nil, err
 	}
 
 	if len(embeddingResponse.Data) == 0 {
 		return nil, fmt.Errorf("no embeddings found")
 	}
-
-	// Print the values of the embeddings
-	// for _, emb := range embeddingResponse.Data {
-	// 	log.Printf("Embedding: %v", emb.Embedding)
-	// }
 
 	// Concatenate the embeddings into a single slice
 	var embeddings []float64

@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 
+	badger "github.com/dgraph-io/badger/v4"
 	"github.com/jaypipes/ghw"        // Package for hardware information
 	"github.com/shirou/gopsutil/mem" // Package for system memory information
 )
@@ -171,4 +172,24 @@ func PrintHostInfo(host HostInfoProvider) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// ListAllDocuments lists all document IDs stored in Badger.
+func ListAllDocuments(db *badger.DB) {
+	err := db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			key := item.Key()
+			fmt.Printf("Document ID: %s\n", key)
+		}
+		return nil
+	})
+
+	if err != nil {
+		log.Printf("Error listing documents: %v", err)
+	}
 }

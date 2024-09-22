@@ -18,9 +18,8 @@ import (
 )
 
 var (
-	llmClient       LLMClient
-	workflowManager WorkflowManager
-	searchIndex     bleve.Index
+	llmClient   LLMClient
+	searchIndex bleve.Index
 )
 
 func main() {
@@ -95,14 +94,20 @@ func main() {
 	// Set up routes
 	setupRoutes(e, config)
 
+	// Initialize WorkflowManager
+	wm := &WorkflowManager{}
+
+	// Set as global instance
+	SetGlobalWorkflowManager(wm)
+
 	// Register tools based on configuration
-	err = RegisterTools(&workflowManager, config)
+	err = RegisterTools(wm, config)
 	if err != nil {
 		log.Printf("Failed to register tools: %v", err)
 	}
 
 	// Get the list of tools from the WorkflowManager
-	tools := workflowManager.ListTools()
+	tools := wm.ListTools()
 	fmt.Println("Registered Tools:")
 	fmt.Println(tools)
 

@@ -45,7 +45,7 @@ func handleWebSocketConnection(c echo.Context) error {
 	}
 
 	// Process the user prompt through the WorkflowManager
-	processedPrompt, err := workflowManager.Run(context.Background(), wsMessage.ChatMessage)
+	processedPrompt, err := globalWM.Run(context.Background(), wsMessage.ChatMessage)
 	if err != nil {
 		log.Printf("Error processing prompt through WorkflowManager: %v", err)
 	}
