@@ -4,9 +4,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/blevesearch/bleve/v2"
 	index "github.com/blevesearch/bleve_index_api"
+	badger "github.com/dgraph-io/badger/v4"
 )
 
 // Tool interface defines the contract for all tools.
@@ -64,6 +68,15 @@ func RegisterTools(wm *WorkflowManager, config *Config) error {
 		case "retrieval":
 			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
 				tool := &RetrievalTool{}
+				err := tool.SetParams(toolConfig.Parameters)
+				if err != nil {
+					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
+				}
+				wm.AddTool(tool, toolConfig.Name)
+			}
+		case "badgerkv":
+			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
+				tool := &BadgerTool{}
 				err := tool.SetParams(toolConfig.Parameters)
 				if err != nil {
 					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
@@ -314,14 +327,24 @@ func (t *RetrievalTool) Process(ctx context.Context, input string) (string, erro
 	req.Text = input
 	req.TopN = t.topN
 
-	log.Printf("Generating embeddings for input text: %s", input)
+	log.Printf("Checking if embedding for input text exists in Badger KV store")
 
-	// Generate the embedding for the input text
-	inputEmbeddings, err := GenerateEmbedding(input)
+	// First, try to retrieve the embedding from Badger
+	badgerTool := &BadgerTool{}
+	inputEmbedding, err := badgerTool.GetEmbedding("input_key")
 	if err != nil {
-		return "", fmt.Errorf("error generating embedding for input text: %v", err)
+		log.Printf("Embedding not found in Badger, generating a new one")
+		// If not found, generate a new embedding
+		inputEmbedding, err = GenerateEmbedding(input)
+		if err != nil {
+			return "", fmt.Errorf("error generating embedding for input text: %v", err)
+		}
+		// Store the new embedding in Badger
+		err = badgerTool.StoreEmbedding("input_key", inputEmbedding)
+		if err != nil {
+			return "", fmt.Errorf("error storing embedding in Badger: %v", err)
+		}
 	}
-	inputEmbedding := inputEmbeddings
 
 	// Print the input embedding for debugging
 	// log.Printf("Input embedding: %v", inputEmbedding)
@@ -434,4 +457,140 @@ func (t *RetrievalTool) Process(ctx context.Context, input string) (string, erro
 	log.Printf("Retrieval results: %v", searchResults)
 
 	return responseBuilder.String(), nil
+}
+
+type BadgerTool struct {
+	db      *badger.DB
+	enabled bool
+}
+
+// Process manages the Badger store, storing embeddings and retrieving them during the process.
+func (t *BadgerTool) Process(ctx context.Context, input string) (string, error) {
+	// Open Badger database
+	// Get user home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	badgerDbPath := filepath.Join(home, ".manifold/badger")
+	opts := badger.DefaultOptions(badgerDbPath)
+	db, err := badger.Open(opts)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+
+	// Save the input (for example purposes, we store the input as the key and its length as a value)
+	err = db.Update(func(txn *badger.Txn) error {
+		err := txn.Set([]byte("input_key"), []byte(input))
+		return err
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	// Read the value back
+	var result string
+	err = db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte("input_key"))
+		if err != nil {
+			return err
+		}
+		val, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		result = string(val)
+		return nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	return result, nil
+}
+
+// StoreEmbedding stores the embedding in Badger with the document ID as the key.
+func (t *BadgerTool) StoreEmbedding(docID string, embedding []float64) error {
+	// Open Badger database
+	// Get user home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	badgerDbPath := filepath.Join(home, ".manifold/badger")
+	opts := badger.DefaultOptions(badgerDbPath)
+	db, err := badger.Open(opts)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Serialize the embedding
+	embeddingBytes, err := json.Marshal(embedding)
+	if err != nil {
+		return err
+	}
+
+	// Store the embedding using docID as the key
+	return db.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte(docID), embeddingBytes)
+	})
+}
+
+// GetEmbedding retrieves the embedding from Badger using the document ID.
+func (t *BadgerTool) GetEmbedding(docID string) ([]float64, error) {
+	var embedding []float64
+
+	// Open Badger database
+	// Get user home directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	badgerDbPath := filepath.Join(home, ".manifold/badger")
+	opts := badger.DefaultOptions(badgerDbPath)
+	db, err := badger.Open(opts)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	// Retrieve the embedding from Badger
+	err = db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(docID))
+		if err != nil {
+			return err
+		}
+		embeddingBytes, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		err = json.Unmarshal(embeddingBytes, &embedding)
+		return err
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return embedding, nil
+}
+
+// SetParams configures the tool with provided parameters.
+func (t *BadgerTool) SetParams(params map[string]interface{}) error {
+	if enabled, ok := params["enabled"].(bool); ok {
+		t.enabled = enabled
+	}
+	return nil
+}
+
+// Enabled returns the enabled status of the tool.
+func (t *BadgerTool) Enabled() bool {
+	return t.enabled
 }
