@@ -361,7 +361,7 @@ func (t *RetrievalTool) StoreDocument(docID string, content string, embedding []
 // IsRedundant checks if the given embedding is too similar to existing embeddings.
 func (t *RetrievalTool) IsRedundant(newEmbedding []float64) (bool, error) {
 	var isRedundant bool
-	similarityThreshold := 0.7 // Set the similarity threshold for deduplication
+	similarityThreshold := 0.9 // Set the similarity threshold for deduplication
 
 	err := t.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
@@ -436,7 +436,7 @@ func (t *RetrievalTool) RetrieveDocuments(ctx context.Context, input string) (st
 			// Print the similarity and content for debugging
 			log.Printf("Similarity with document ID %s: %f", key, similarity)
 
-			if similarity > 0.5 { // Threshold can be adjusted
+			if similarity > 0.6 { // Threshold can be adjusted
 				searchResults = append(searchResults, struct {
 					ID         string  `json:"id"`
 					Content    string  `json:"content"`

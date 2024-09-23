@@ -60,9 +60,9 @@ func main() {
 	}
 
 	// Load tools data into the database
-	if err := loadToolsToDB(db, config.Tools); err != nil {
-		log.Fatal(err)
-	}
+	// if err := loadToolsToDB(db, config.Tools); err != nil {
+	// 	log.Fatal(err)
+	// }
 
 	// Load completions roles into the database
 	if err := loadCompletionsRolesToDB(db, config.Roles); err != nil {
