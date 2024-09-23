@@ -123,8 +123,15 @@ func (wm *WorkflowManager) Run(ctx context.Context, prompt string) (string, erro
 			log.Printf("error processing with tool %s: %v", wrapper.Name, err)
 		}
 
+		retrievalInstructions := `You have been provided with relevant document chunks retrieved from a retrieval-augmented generation (RAG) workflow. Use the information contained in these chunks to assist in generating your response only if it directly contributes to answering the user's prompt. You must ensure that:
+
+You do not explicitly reference or mention the existence of these chunks.
+You seamlessly incorporate relevant information into your response as if it were part of your own knowledge.
+If the provided chunks are not helpful for addressing the user's prompt, you may generate a response based on your general knowledge.
+Now proceed with answering the user's prompt:`
+
 		// Prepend the processed output to the prompt for the next tool without overwriting the original prompt
-		prompt = processed + "\n" + prompt
+		prompt = processed + "\n" + retrievalInstructions + "\n" + prompt
 
 	}
 
@@ -436,7 +443,7 @@ func (t *RetrievalTool) RetrieveDocuments(ctx context.Context, input string) (st
 			// Print the similarity and content for debugging
 			log.Printf("Similarity with document ID %s: %f", key, similarity)
 
-			if similarity > 0.6 { // Threshold can be adjusted
+			if similarity > 0.5 { // Threshold can be adjusted
 				searchResults = append(searchResults, struct {
 					ID         string  `json:"id"`
 					Content    string  `json:"content"`
@@ -464,8 +471,8 @@ func (t *RetrievalTool) RetrieveDocuments(ctx context.Context, input string) (st
 	})
 
 	// Limit the results to the top N documents
-	if len(searchResults) > 3 {
-		searchResults = searchResults[:3]
+	if len(searchResults) > 6 {
+		searchResults = searchResults[:6]
 	}
 
 	// Concatenate the content of the top N results
