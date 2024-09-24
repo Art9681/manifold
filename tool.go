@@ -117,25 +117,32 @@ func (wm *WorkflowManager) Run(ctx context.Context, prompt string) (string, erro
 	// Get the list of enabled tools and print their names
 	log.Printf("Enabled tools: %v", wm.ListTools())
 
+	var allContent strings.Builder
+
 	for _, wrapper := range wm.tools {
 		processed, err := wrapper.Tool.Process(ctx, prompt)
 		if err != nil {
 			log.Printf("error processing with tool %s: %v", wrapper.Name, err)
 		}
 
-		retrievalInstructions := `You have been provided with relevant document chunks retrieved from a retrieval-augmented generation (RAG) workflow. Use the information contained in these chunks to assist in generating your response only if it directly contributes to answering the user's prompt. You must ensure that:
-
-You do not explicitly reference or mention the existence of these chunks.
-You seamlessly incorporate relevant information into your response as if it were part of your own knowledge.
-If the provided chunks are not helpful for addressing the user's prompt, you may generate a response based on your general knowledge.
-Now proceed with answering the user's prompt:`
-
-		// Prepend the processed output to the prompt for the next tool without overwriting the original prompt
-		prompt = processed + "\n" + retrievalInstructions + "\n" + prompt
-
+		// Append the processed output to the final content
+		allContent.WriteString(processed)
 	}
 
-	return prompt, nil
+	retrievalInstructions := `\n\nYou have been provided with relevant document chunks retrieved from a retrieval-augmented generation (RAG) workflow. Use the information contained in these chunks to assist in generating your response only if it directly contributes to answering the user's prompt. You must ensure that:
+
+	You do not explicitly reference or mention the existence of these chunks.
+	You seamlessly incorporate relevant information into your response as if it were part of your own knowledge.
+	If the provided chunks are not helpful for addressing the user's prompt, you may generate a response based on your general knowledge.
+	Now proceed with answering the user's prompt:\n\n`
+
+	// Append the retrieval instructions to the final content
+	allContent.WriteString(retrievalInstructions)
+
+	// Append the prompt to the final content
+	allContent.WriteString(prompt)
+
+	return allContent.String(), nil
 }
 
 // WebSearchTool is an existing tool for performing web searches.

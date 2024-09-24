@@ -57,10 +57,10 @@ func handleWebSocketConnection(c echo.Context) error {
 	payload := &CompletionRequest{
 		Model:       wsMessage.Model,
 		Messages:    cpt.FormatMessages(nil), // Assuming no additional variables
-		Temperature: 0.6,
+		Temperature: 0.3,
 		MaxTokens:   64000, // Ensure this is set by the backend LLM config in a future commit.
 		Stream:      true,
-		TopP:        0.9,
+		//TopP:        0.9,
 	}
 
 	for {

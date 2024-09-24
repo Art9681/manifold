@@ -144,6 +144,7 @@ func main() {
 		llmClient = NewLocalLLMClient(baseURL, "", "")
 
 	case "openai":
+		completionsCtx, cancel = context.WithCancel(context.Background())
 		if config.OpenAIAPIKey == "" {
 			log.Fatal("OpenAI API key is not set in config")
 		}

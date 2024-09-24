@@ -81,10 +81,10 @@ type Model struct {
 type CompletionRequest struct {
 	Model       string    `json:"model,omitempty"`
 	Messages    []Message `json:"messages"`
-	Temperature float64   `json:"temperature"`
-	TopP        float64   `json:"top_p"`
-	MaxTokens   int       `json:"max_tokens"`
-	Stream      bool      `json:"stream"`
+	Temperature float64   `json:"temperature,omitempty"`
+	TopP        float64   `json:"top_p,omitempty"`
+	MaxTokens   int       `json:"max_tokens,omitempty"`
+	Stream      bool      `json:"stream,omitempty"`
 }
 
 // Choice represents a choice for the completion response.
@@ -183,7 +183,17 @@ func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.R
 	// if the client url is openai, set the payload model to gpt-4o-mini
 	// this should not be hard coded but loaded from app config instead
 	if client.BaseURL == "https://api.openai.com/v1" {
+		// Print the client base url
+		fmt.Println(client.BaseURL)
 		payload.Model = "gpt-4o-mini"
+
+		// Create a new CompletionRequest without the MaxTokens field
+		payload = &CompletionRequest{
+			Model:       payload.Model,
+			Messages:    payload.Messages,
+			Temperature: payload.Temperature,
+			Stream:      payload.Stream,
+		}
 	}
 
 	// Convert the payload to JSON
@@ -199,16 +209,16 @@ func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.R
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-
-	if client.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+client.APIKey)
-	}
+	req.Header.Set("Authorization", "Bearer "+client.APIKey)
 
 	return http.DefaultClient.Do(req)
 }
 
 func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID int, model string, payload *CompletionRequest, responseBuffer *bytes.Buffer) error {
 	timestamp := time.Now().Format(time.RFC3339)
+
+	// Print the payload
+	fmt.Println(payload)
 
 	// Use llmClient to send the request
 	resp, err := llmClient.SendCompletionRequest(payload)
