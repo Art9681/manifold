@@ -185,7 +185,7 @@ func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.R
 	if client.BaseURL == "https://api.openai.com/v1" {
 		// Print the client base url
 		fmt.Println(client.BaseURL)
-		payload.Model = "gpt-4o-mini"
+		payload.Model = "chatgpt-4o-latest"
 
 		// Create a new CompletionRequest without the MaxTokens field
 		payload = &CompletionRequest{

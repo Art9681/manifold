@@ -114,6 +114,11 @@ func (wm *WorkflowManager) ListTools() []string {
 
 // Run executes all enabled tools in the workflow sequentially.
 func (wm *WorkflowManager) Run(ctx context.Context, prompt string) (string, error) {
+	// If no tools are enabled, return the prompt as is
+	if len(wm.tools) == 0 {
+		return prompt, nil
+	}
+
 	// Get the list of enabled tools and print their names
 	log.Printf("Enabled tools: %v", wm.ListTools())
 
