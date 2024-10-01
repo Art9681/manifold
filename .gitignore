@@ -9,3 +9,4 @@ TODO
 manifold_repo.txt
 embeddings.json
 cmd/repoconcat/manifold.txt
+cmd/repoconcat/README.md

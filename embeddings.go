@@ -3,9 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
-	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -56,58 +54,4 @@ func handleEmbeddingRequest(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, embeddingResponse)
-}
-
-// Define the request structure for storing documents
-type StoreDocumentRequest struct {
-	Text string `json:"text"`
-}
-
-// Handler to store text and embeddings in Badger
-func handleStoreDocument(c echo.Context) error {
-	// Parse the request body
-	req := new(StoreDocumentRequest)
-	if err := c.Bind(req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request format")
-	}
-
-	// Validate input
-	if req.Text == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "Text cannot be empty")
-	}
-
-	// Generate embeddings for the input text
-	embedding, err := GenerateEmbedding(req.Text)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to generate embeddings")
-	}
-
-	// Create a unique document ID
-	docID := fmt.Sprintf("doc-%d", time.Now().UnixNano())
-
-	// Find the RetrievalTool in the WorkflowManager to store the document
-	var retrievalTool *RetrievalTool
-	for _, tool := range globalWM.tools {
-		if tool.Name == "retrieval" {
-			retrievalTool, _ = tool.Tool.(*RetrievalTool)
-			break
-		}
-	}
-
-	if retrievalTool == nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Retrieval tool not found")
-	}
-
-	// Store the document and embeddings in Badger
-	err = retrievalTool.StoreDocument(docID, req.Text, embedding)
-	if err != nil {
-		log.Printf("Error storing document in Badger: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to store document")
-	}
-
-	// Return success response
-	return c.JSON(http.StatusOK, map[string]string{
-		"message":  "Document stored successfully",
-		"document": docID,
-	})
 }

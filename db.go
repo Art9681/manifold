@@ -2,11 +2,16 @@
 package main
 
 import (
+	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"gorm.io/driver/sqlite"
@@ -92,6 +97,7 @@ type Chat struct {
 	Prompt    string `json:"prompt"`
 	Response  string `json:"response"`
 	ModelName string `json:"modelName"`
+	Embedding []byte `json:"embedding"`
 }
 
 type URLTracking struct {
@@ -459,4 +465,81 @@ func loadToolsToDB(db *SQLiteDB, tools []ToolConfig) error {
 	}
 	log.Println("Tools metadata loaded to database")
 	return nil
+}
+
+// sanitizeFTSQuery cleans the query string for FTS5 by escaping and removing problematic characters.
+func sanitizeFTSQuery(query string) string {
+	// Replace single quotes with two single quotes for SQLite escaping
+	sanitized := strings.ReplaceAll(query, "'", "''")
+
+	// Remove question marks and other punctuation except for '*' (used for prefix searches)
+	re := regexp.MustCompile(`[^\w\s*]`)
+	sanitized = re.ReplaceAllString(sanitized, "")
+
+	// Trim leading and trailing whitespace
+	sanitized = strings.TrimSpace(sanitized)
+
+	return sanitized
+}
+
+// RetrieveTopNDocuments performs a full-text search and returns the top N relevant documents.
+func (sqldb *SQLiteDB) RetrieveTopNDocuments(ctx context.Context, query string, topN int) ([]string, error) {
+	// Sanitize the query string to prevent syntax errors
+	sanitizedQuery := sanitizeFTSQuery(query)
+
+	// Prepare a slice to hold the search results
+	var results []string
+
+	// Build the SQL query dynamically since FTS5 doesn't support placeholders in MATCH
+	sqlQuery := fmt.Sprintf(`
+        SELECT prompt, response 
+        FROM chat_fts 
+        WHERE chat_fts MATCH '%s' 
+        ORDER BY bm25(chat_fts) 
+        LIMIT %d;
+    `, sanitizedQuery, topN)
+
+	// Log the constructed SQL query for debugging purposes
+	log.Printf("Executing FTS5 Query: %s", sqlQuery)
+
+	// Execute the dynamically built query
+	rows, err := sqldb.db.Raw(sqlQuery).Rows()
+	if err != nil {
+		return nil, fmt.Errorf("error querying database: %v", err)
+	}
+	defer rows.Close()
+
+	// Loop through the results and append them to the results slice
+	for rows.Next() {
+		var prompt, response string
+		if err := rows.Scan(&prompt, &response); err != nil {
+			return nil, fmt.Errorf("error scanning row: %v", err)
+		}
+		result := fmt.Sprintf("Prompt: %s\nResponse: %s", prompt, response)
+		results = append(results, result)
+	}
+
+	// Check for errors encountered during iteration
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over rows: %v", err)
+	}
+
+	return results, nil
+}
+
+func embeddingToBlob(embedding []float64) []byte {
+	buf := make([]byte, len(embedding)*8) // Each float64 is 8 bytes
+	for i, v := range embedding {
+		binary.LittleEndian.PutUint64(buf[i*8:(i+1)*8], math.Float64bits(v))
+	}
+	return buf
+}
+
+// blobToEmbedding converts a byte slice (BLOB) back into a slice of float64 values.
+func blobToEmbedding(blob []byte) []float64 {
+	embedding := make([]float64, len(blob)/8) // Each float64 is 8 bytes
+	for i := 0; i < len(embedding); i++ {
+		embedding[i] = math.Float64frombits(binary.LittleEndian.Uint64(blob[i*8:]))
+	}
+	return embedding
 }

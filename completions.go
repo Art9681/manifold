@@ -15,7 +15,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 
-	"manifold/internal/documents"
 	"manifold/internal/web"
 )
 
@@ -342,54 +341,39 @@ func handleGetAllChatRoles(c echo.Context, config *Config) error {
 	return c.JSON(http.StatusOK, rolesMap)
 }
 
-// SaveChatTurn stores the chat turn's prompt and response in the Badger KV store.
 func SaveChatTurn(prompt, response, timestamp string) error {
 	// Concatenate the prompt and response
 	concatenatedText := fmt.Sprintf("User: %s\nAssistant: %s", prompt, response)
 
-	// Split the concatenated text into chunks of 1000 tokens
-	chunks := documents.SplitTextByCount(concatenatedText, 500)
-
-	// Create a unique chat turn ID
-	chatTurnID := fmt.Sprintf("chatturn-%d", time.Now().UnixNano())
-
-	// Find the RetrievalTool within the WorkflowManager
-	var retrievalTool *RetrievalTool
-	for _, tool := range globalWM.tools {
-		if tool.Name == "retrieval" {
-			var ok bool
-			retrievalTool, ok = tool.Tool.(*RetrievalTool)
-			if !ok {
-				return fmt.Errorf("retrieval tool type assertion failed")
-			}
-			break
-		}
+	// Generate embeddings for the prompt and response
+	embeddings, err := GenerateEmbedding(concatenatedText)
+	if err != nil {
+		log.Printf("Error generating embeddings: %v", err)
+		return err
 	}
 
-	if retrievalTool == nil {
-		return fmt.Errorf("retrieval tool not found in WorkflowManager")
+	// Convert embeddings to BLOB
+	embeddingBlob := embeddingToBlob(embeddings)
+
+	// Insert the prompt, response, and embeddings into the Chat table
+	chat := Chat{
+		Prompt:    prompt,
+		Response:  response,
+		ModelName: "model_name",  // Update with actual model name
+		Embedding: embeddingBlob, // Store the embedding as BLOB
 	}
 
-	// Iterate over each chunk, generate embeddings, and store in Badger
-	for _, chunk := range chunks {
-		embeddings, err := GenerateEmbedding(chunk)
-		if err != nil {
-			log.Printf("Error generating embeddings for chunk: %v", err)
-			continue
-		}
-
-		docID := fmt.Sprintf("%s-%d", chatTurnID, time.Now().UnixNano())
-
-		// Store the document and its embedding in Badger
-		err = retrievalTool.StoreDocument(docID, chunk, embeddings)
-		if err != nil {
-			log.Printf("Error storing document in Badger: %v", err)
-			continue
-		}
+	// Insert chat into the Chat table
+	if err := db.Create(&chat); err != nil {
+		return fmt.Errorf("failed to save chat turn: %w", err)
 	}
 
-	if retrievalTool == nil {
-		return fmt.Errorf("retrieval tool not found in WorkflowManager")
+	// Insert the prompt and response into the chat_fts table for full-text search
+	if err := db.db.Exec(`
+        INSERT INTO chat_fts (prompt, response) 
+        VALUES (?, ?)
+    `, prompt, response).Error; err != nil {
+		return fmt.Errorf("failed to save chat turn in FTS5 table: %w", err)
 	}
 
 	return nil

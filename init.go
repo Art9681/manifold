@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"manifold/internal/edata"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,34 +19,34 @@ import (
 var embedFS embed.FS
 
 // initializeApplication initializes the application with the given configuration.
-func initializeApplication(config *Config) (*SQLiteDB, bleve.Index, error) {
+func initializeApplication(config *Config) (*SQLiteDB, error) {
 	createDataDirectory(config.DataPath)
 	initializeServer(config.DataPath)
 	db, err := initializeDatabase(config.DataPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	searchIndex, err = initializeSearchIndex(config.DataPath)
-	if err != nil {
-		return nil, nil, err
-	}
+	// searchIndex, err = initializeSearchIndex(config.DataPath)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
 	// Print the number of documents in the search index
-	count, err := searchIndex.DocCount()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get document count from search index: %w", err)
-	}
+	// count, err := searchIndex.DocCount()
+	// if err != nil {
+	// 	return nil, nil, fmt.Errorf("failed to get document count from search index: %w", err)
+	// }
 
-	fmt.Printf("Search index contains %d documents\n", count)
+	// fmt.Printf("Search index contains %d documents\n", count)
 
 	// Initialize the edata database
-	err = edata.InitDB(filepath.Join(config.DataPath, "edata.db"))
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize edata database: %w", err)
-	}
+	// err = edata.InitDB(filepath.Join(config.DataPath, "edata.db"))
+	// if err != nil {
+	// 	return nil, nil, fmt.Errorf("failed to initialize edata database: %w", err)
+	// }
 
-	return db, searchIndex, nil
+	return db, nil
 }
 
 // createDataDirectory creates the data directory and removes the temporary directory if it exists.
@@ -77,7 +76,7 @@ func initializeServer(dataPath string) error {
 
 // initializeDatabase initializes the SQLite database and performs auto-migration.
 func initializeDatabase(dataPath string) (*SQLiteDB, error) {
-	dbPath := filepath.Join(dataPath, "database.sqlite")
+	dbPath := filepath.Join(dataPath, "eternaldata.db") // Changed from "database.sqlite" to "eternaldata.db"
 	dbExists := fileExists(dbPath)
 
 	db, err := NewSQLiteDB(dataPath)
@@ -96,7 +95,19 @@ func initializeDatabase(dataPath string) (*SQLiteDB, error) {
 		if err != nil {
 			return nil, err
 		}
-		log.Println("Database created and migrated")
+
+		// Create FTS5 table for full-text search on 'Prompt' and 'Response'
+		err = db.db.Exec(`
+            CREATE VIRTUAL TABLE IF NOT EXISTS chat_fts USING fts5(
+                prompt,
+                response
+            );
+        `).Error
+		if err != nil {
+			return nil, fmt.Errorf("failed to create FTS5 table: %v", err)
+		}
+
+		log.Println("Database created, migrated, and FTS5 table created")
 	} else {
 		log.Println("Existing database found")
 	}

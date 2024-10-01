@@ -20,6 +20,7 @@ import (
 var (
 	llmClient   LLMClient
 	searchIndex bleve.Index
+	db          *SQLiteDB
 )
 
 func main() {
@@ -49,7 +50,7 @@ func main() {
 	config.DataPath = home + "/.manifold"
 
 	// Initialize the application
-	db, _, err := initializeApplication(config)
+	db, err = initializeApplication(config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -57,6 +58,21 @@ func main() {
 	err = db.AutoMigrate(&ToolMetadata{}, &ToolParam{}, &CompletionsRole{}, &ModelParams{}, &URLTracking{})
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Example search query and top N results to retrieve
+	query := "Jax"
+	topN := 5
+
+	// Retrieve top N documents
+	results, err := db.RetrieveTopNDocuments(context.TODO(), query, topN)
+	if err != nil {
+		log.Fatalf("Error retrieving documents: %v", err)
+	}
+
+	// Print the results
+	for i, result := range results {
+		fmt.Printf("Result %d:\n%s\n\n", i+1, result)
 	}
 
 	// Load tools data into the database

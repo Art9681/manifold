@@ -4,19 +4,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
 	"manifold/internal/web"
-
-	badger "github.com/dgraph-io/badger/v4"
 )
 
 // Tool interface defines the contract for all tools.
@@ -65,15 +59,6 @@ func RegisterTools(wm *WorkflowManager, config *Config) error {
 		case "retrieval":
 			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
 				tool := &RetrievalTool{}
-				err := tool.SetParams(toolConfig.Parameters)
-				if err != nil {
-					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
-				}
-				wm.AddTool(tool, toolConfig.Name)
-			}
-		case "badgerkv":
-			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
-				tool := &BadgerTool{}
 				err := tool.SetParams(toolConfig.Parameters)
 				if err != nil {
 					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
@@ -314,7 +299,6 @@ func (t *WebGetTool) SetParams(params map[string]interface{}) error {
 
 type RetrievalTool struct {
 	enabled bool
-	db      *badger.DB
 	topN    int
 }
 
@@ -329,179 +313,28 @@ func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
 		t.topN = 3 // Default value
 	}
 
-	// Initialize Badger database
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	badgerDbPath := filepath.Join(home, ".manifold/badger")
-	opts := badger.DefaultOptions(badgerDbPath)
-	t.db, err = badger.Open(opts)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
-// StoreDocument stores a document's content and its embedding in Badger if it's not redundant.
-func (t *RetrievalTool) StoreDocument(docID string, content string, embedding []float64) error {
-	// Check if this document is too similar to existing ones.
-	isRedundant, err := t.IsRedundant(embedding)
-	if err != nil {
-		return err
-	}
-
-	if isRedundant {
-		log.Printf("Document is too similar to existing documents, skipping storage.")
-		return nil
-	}
-
-	// Serialize the content and embedding
-	data := struct {
-		Content   string    `json:"content"`
-		Embedding []float64 `json:"embedding"`
-	}{
-		Content:   content,
-		Embedding: embedding,
-	}
-
-	dataBytes, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-
-	// Store in Badger
-	return t.db.Update(func(txn *badger.Txn) error {
-		return txn.Set([]byte(docID), dataBytes)
-	})
-}
-
-// IsRedundant checks if the given embedding is too similar to existing embeddings.
-func (t *RetrievalTool) IsRedundant(newEmbedding []float64) (bool, error) {
-	var isRedundant bool
-	similarityThreshold := 0.9 // Set the similarity threshold for deduplication
-
-	err := t.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-
-			var data struct {
-				Embedding []float64 `json:"embedding"`
-			}
-
-			err := item.Value(func(val []byte) error {
-				return json.Unmarshal(val, &data)
-			})
-			if err != nil {
-				return err
-			}
-
-			// Calculate similarity between newEmbedding and the stored embedding
-			similarity := CosineSimilarity(newEmbedding, data.Embedding)
-			if similarity >= similarityThreshold {
-				isRedundant = true
-				return nil // Exit early if redundancy is found
-			}
-		}
-		return nil
-	})
-
-	return isRedundant, err
-}
-
-func (t *RetrievalTool) RetrieveDocuments(ctx context.Context, input string) (string, error) {
-	// Generate the embedding for the input text
-	inputEmbedding, err := GenerateEmbedding(input)
-	if err != nil {
-		return "", fmt.Errorf("error generating embedding for input text: %v", err)
-	}
-
-	// Iterate over all stored documents in Badger and calculate similarity
-	var searchResults []struct {
-		ID         string  `json:"id"`
-		Content    string  `json:"content"`
-		Similarity float64 `json:"similarity"`
-	}
-
-	err = t.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			key := item.Key()
-
-			var data struct {
-				Content   string    `json:"content"`
-				Embedding []float64 `json:"embedding"`
-			}
-
-			err := item.Value(func(val []byte) error {
-				return json.Unmarshal(val, &data)
-			})
-			if err != nil {
-				return err
-			}
-
-			// Calculate similarity between the input embedding and the document embedding
-			similarity := CosineSimilarity(inputEmbedding, data.Embedding)
-
-			// Print the similarity and content for debugging
-			log.Printf("Similarity with document ID %s: %f", key, similarity)
-
-			if similarity > 0.5 { // Threshold can be adjusted
-				searchResults = append(searchResults, struct {
-					ID         string  `json:"id"`
-					Content    string  `json:"content"`
-					Similarity float64 `json:"similarity"`
-				}{
-					ID:         string(key),
-					Content:    data.Content,
-					Similarity: similarity,
-				})
-			}
-
-			// Print the search results for debugging
-			log.Printf("Search results: %v", searchResults)
-		}
-		return nil
-	})
-
+// Process is the main method that processes the input using sqlite fts5
+func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
+	// Try to retrieve similar documents based on the input embedding
+	documents, err := db.RetrieveTopNDocuments(ctx, input, t.topN)
 	if err != nil {
 		return "", err
 	}
 
-	// Sort the search results by similarity in descending order
-	sort.Slice(searchResults, func(i, j int) bool {
-		return searchResults[i].Similarity > searchResults[j].Similarity
-	})
+	// Print the retrieved documents for debugging
+	log.Printf("Retrieved Documents: %v", documents)
 
-	// Limit the results to the top N documents
-	if len(searchResults) > 6 {
-		searchResults = searchResults[:6]
+	// Combine the documents into a single string
+	var result strings.Builder
+	for _, doc := range documents {
+		result.WriteString(doc)
+		result.WriteString("\n") // Separator between documents
 	}
 
-	// Concatenate the content of the top N results
-	var resultBuilder strings.Builder
-	for _, result := range searchResults {
-		resultBuilder.WriteString(fmt.Sprintf("Document ID: %s\n", result.ID))
-		resultBuilder.WriteString(result.Content)
-		resultBuilder.WriteString("\n\n")
-	}
-
-	return resultBuilder.String(), nil
-}
-
-// Process is the main method that processes the input using Badger.
-func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
-	// Try to retrieve similar documents based on the input embedding
-	return t.RetrieveDocuments(ctx, input)
+	return result.String(), nil
 }
 
 // Enabled returns the enabled status of the tool.
@@ -509,110 +342,16 @@ func (t *RetrievalTool) Enabled() bool {
 	return t.enabled
 }
 
-type BadgerTool struct {
-	db      *badger.DB
-	enabled bool
-}
-
-func (t *BadgerTool) Process(ctx context.Context, input string) (string, error) {
-	// BadgerTool may not need to process inputs directly.
-	// You can either log an action or return a simple message indicating it's a store tool.
-	log.Println("BadgerTool does not perform direct processing.")
-	return input, nil
-}
-
-// StoreEmbedding stores the embedding in Badger with the document ID as the key.
-func (t *BadgerTool) StoreEmbedding(docID string, embedding []float64, content string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
+// CreateToolByName is a helper function to create a tool by its name
+func CreateToolByName(toolName string) (Tool, error) {
+	switch toolName {
+	case "websearch":
+		return &WebSearchTool{}, nil
+	case "webget":
+		return &WebGetTool{}, nil
+	case "retrieval":
+		return &RetrievalTool{}, nil
+	default:
+		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
-
-	badgerDbPath := filepath.Join(home, ".manifold/badger")
-	opts := badger.DefaultOptions(badgerDbPath)
-	db, err := badger.Open(opts)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	// Serialize the content and embedding
-	data := struct {
-		Content   string    `json:"content"`
-		Embedding []float64 `json:"embedding"`
-	}{
-		Content:   content,
-		Embedding: embedding,
-	}
-
-	dataBytes, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("error marshalling embedding data: %v", err)
-	}
-
-	// Log the data being stored for debugging
-	log.Printf("Storing document ID %s with data: %s", docID, string(dataBytes))
-
-	// Store the embedding using docID as the key
-	return db.Update(func(txn *badger.Txn) error {
-		return txn.Set([]byte(docID), dataBytes)
-	})
-}
-
-// GetEmbedding retrieves the embedding from Badger using the document ID.
-func (t *BadgerTool) GetEmbedding(docID string) (string, []float64, error) {
-	var data struct {
-		Content   string    `json:"content"`
-		Embedding []float64 `json:"embedding"`
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", nil, err
-	}
-
-	badgerDbPath := filepath.Join(home, ".manifold/badger")
-	opts := badger.DefaultOptions(badgerDbPath)
-	db, err := badger.Open(opts)
-	if err != nil {
-		return "", nil, err
-	}
-	defer db.Close()
-
-	// Retrieve the embedding from Badger
-	err = db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(docID))
-		if err != nil {
-			return err
-		}
-
-		// Print the data being retrieved for debugging
-		log.Printf("Retrieving document ID %s", docID)
-
-		// Print the item value for debugging
-		log.Printf("Item value: %v", item)
-
-		return item.Value(func(val []byte) error {
-			return json.Unmarshal(val, &data)
-		})
-	})
-
-	if err != nil {
-		return "", nil, fmt.Errorf("error unmarshalling embedding data: %v", err)
-	}
-
-	return data.Content, data.Embedding, nil
-}
-
-// SetParams configures the tool with provided parameters.
-func (t *BadgerTool) SetParams(params map[string]interface{}) error {
-	if enabled, ok := params["enabled"].(bool); ok {
-		t.enabled = enabled
-	}
-	return nil
-}
-
-// Enabled returns the enabled status of the tool.
-func (t *BadgerTool) Enabled() bool {
-	return t.enabled
 }

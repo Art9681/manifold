@@ -41,9 +41,11 @@ func setupRoutes(e *echo.Echo, config *Config) {
 		return handleSetChatRole(c, config)
 	})
 
-	// RAG endpoints
+	// Tool routes
+	// e.POST("/v1/tools/:toolName/toggle", handleToolToggle)
+
+	// Retrieval Augmented Generation (RAG) routes
 	// Route for storing text and embeddings
-	e.POST("/v1/store-document", handleStoreDocument)
 	e.POST("/v1/embeddings", handleEmbeddingRequest)
 	e.POST("/v1/rag", func(c echo.Context) error {
 		_, err := handleRagRequest(c)
@@ -59,4 +61,12 @@ func setupRoutes(e *echo.Echo, config *Config) {
 // handleGetConfig is a handler for getting the configuration
 func handleGetConfig(c echo.Context, config *Config) error {
 	return c.JSON(http.StatusOK, config)
+}
+
+// Helper function to convert bool to string
+func boolToString(b bool) string {
+	if b {
+		return "enabled"
+	}
+	return "disabled"
 }
