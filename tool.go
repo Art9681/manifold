@@ -4,11 +4,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"manifold/internal/web"
 )
@@ -203,9 +205,6 @@ func (t *WebSearchTool) Process(ctx context.Context, input string) (string, erro
 	var aggregatedContent strings.Builder
 	for res := range resultsChan {
 		if res.err == nil && res.content != "" {
-			// Store the fetched content in the search index
-			//searchIndex.Index("search_result", res.content)
-
 			aggregatedContent.WriteString(res.content)
 			aggregatedContent.WriteString("\n") // Separator between contents
 		}
@@ -273,11 +272,15 @@ func (t *WebGetTool) Process(ctx context.Context, input string) (string, error) 
 			continue
 		}
 
-		// Store the fetched content in the search index
-		// searchIndex.Index(u, content)
-
 		aggregatedContent.WriteString(content)
 		aggregatedContent.WriteString("\n") // Separator between contents
+	}
+
+	timestamp := time.Now().Format(time.RFC3339)
+
+	err := SaveChatTurn(input, aggregatedContent.String(), timestamp)
+	if err != nil {
+		log.Printf("Failed to save web document: %v", err)
 	}
 
 	return aggregatedContent.String(), nil
@@ -354,4 +357,77 @@ func CreateToolByName(toolName string) (Tool, error) {
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
+}
+
+func SaveChatTurn(prompt, response, timestamp string) error {
+	// Concatenate the prompt and response
+	concatenatedText := fmt.Sprintf("User: %s\nAssistant: %s", prompt, response)
+
+	// Generate embeddings for the prompt and response
+	embeddings, err := GenerateEmbedding(concatenatedText)
+	if err != nil {
+		log.Printf("Error generating embeddings: %v", err)
+		return err
+	}
+
+	// Convert embeddings to BLOB
+	embeddingBlob := embeddingToBlob(embeddings)
+
+	// Insert the prompt, response, and embeddings into the Chat table
+	chat := Chat{
+		Prompt:    prompt,
+		Response:  response,
+		ModelName: "model_name",  // Update with actual model name
+		Embedding: embeddingBlob, // Store the embedding as BLOB
+	}
+
+	// Insert chat into the Chat table
+	if err := db.Create(&chat); err != nil {
+		return fmt.Errorf("failed to save chat turn: %w", err)
+	}
+
+	// Insert the prompt and response into the chat_fts table for full-text search
+	if err := db.db.Exec(`
+        INSERT INTO chat_fts (prompt, response) 
+        VALUES (?, ?)
+    `, prompt, response).Error; err != nil {
+		return fmt.Errorf("failed to save chat turn in FTS5 table: %w", err)
+	}
+
+	return nil
+}
+
+func GenerateEmbedding(text string) ([]float64, error) {
+	// Invoke the embeddings API
+	textArr := []string{text}
+	embeddingRequest := EmbeddingRequest{
+		Input:          textArr,
+		Model:          "eternal",
+		EncodingFormat: "float",
+	}
+
+	resp, err := llmClient.SendEmbeddingRequest(&embeddingRequest)
+	if err != nil {
+		log.Printf("Error sending embedding request: %v", err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var embeddingResponse EmbeddingResponse
+	if err := json.NewDecoder(resp.Body).Decode(&embeddingResponse); err != nil {
+		log.Printf("Error decoding embedding response: %v", err)
+		return nil, err
+	}
+
+	if len(embeddingResponse.Data) == 0 {
+		return nil, fmt.Errorf("no embeddings found")
+	}
+
+	// Concatenate the embeddings into a single slice
+	var embeddings []float64
+	for _, emb := range embeddingResponse.Data {
+		embeddings = append(embeddings, emb.Embedding...)
+	}
+
+	return embeddings, nil
 }
