@@ -98,10 +98,11 @@ func initializeDatabase(dataPath string) (*SQLiteDB, error) {
 
 		// Create FTS5 table for full-text search on 'Prompt' and 'Response'
 		err = db.db.Exec(`
-            CREATE VIRTUAL TABLE IF NOT EXISTS chat_fts USING fts5(
-                prompt,
-                response
-            );
+			CREATE VIRTUAL TABLE IF NOT EXISTS chat_fts USING fts5(
+				prompt,
+				response,
+				tokenize = "unicode61 remove_diacritics 1 tokenchars '.@'"
+			);
         `).Error
 		if err != nil {
 			return nil, fmt.Errorf("failed to create FTS5 table: %v", err)

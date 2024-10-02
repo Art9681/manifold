@@ -549,7 +549,7 @@ func (sqldb *SQLiteDB) RetrieveTopNDocuments(ctx context.Context, query string, 
         SELECT prompt, response 
         FROM chat_fts 
         WHERE chat_fts MATCH '%s' 
-        ORDER BY bm25(chat_fts) 
+        ORDER BY bm25(chat_fts, 1.0, 0.5) DESC
         LIMIT %d;
     `, ftsQuery, topN)
 
