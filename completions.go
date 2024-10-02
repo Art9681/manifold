@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -214,10 +215,25 @@ func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.R
 }
 
 func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID int, model string, payload *CompletionRequest, responseBuffer *bytes.Buffer) error {
-	timestamp := time.Now().Format(time.RFC3339)
 
-	// Print the payload
-	fmt.Println(payload)
+	// Get the string in between brackets for the user prompt
+	userPrompt := payload.Messages[1].Content
+	userPrompt = userPrompt[1 : len(userPrompt)-1]
+
+	// Print the user prompt
+	fmt.Println("USER PROMPT")
+	fmt.Println(userPrompt)
+
+	// Process the user prompt through the WorkflowManager
+	processedPrompt, err := globalWM.Run(context.Background(), payload.Messages[1].Content)
+	if err != nil {
+		log.Printf("Error processing prompt through WorkflowManager: %v", err)
+	}
+
+	// Prepend the processed prompt to the messages
+	payload.Messages[1].Content = processedPrompt
+
+	timestamp := time.Now().Format(time.RFC3339)
 
 	// Use llmClient to send the request
 	resp, err := llmClient.SendCompletionRequest(payload)
@@ -242,7 +258,8 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 			}
 
 			if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-				err := SaveChatTurn(payload.Messages[1].Content, responseBuffer.String(), timestamp)
+				// Print the user prompt
+				err := SaveChatTurn(userPrompt, responseBuffer.String(), timestamp)
 				if err != nil {
 					log.Printf("Error saving chat turn: %v", err)
 				}
@@ -253,7 +270,7 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 			for _, choice := range data.Choices {
 				// If the finish reason is "stop", then stop streaming
 				if choice.FinishReason == "stop" {
-					err := SaveChatTurn(payload.Messages[1].Content, responseBuffer.String(), timestamp)
+					err := SaveChatTurn(userPrompt, responseBuffer.String(), timestamp)
 					if err != nil {
 						log.Printf("Error saving chat turn: %v", err)
 					}

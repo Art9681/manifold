@@ -204,7 +204,7 @@ func (t *WebSearchTool) Process(ctx context.Context, input string) (string, erro
 	for res := range resultsChan {
 		if res.err == nil && res.content != "" {
 			// Store the fetched content in the search index
-			searchIndex.Index("search_result", res.content)
+			//searchIndex.Index("search_result", res.content)
 
 			aggregatedContent.WriteString(res.content)
 			aggregatedContent.WriteString("\n") // Separator between contents
@@ -274,7 +274,7 @@ func (t *WebGetTool) Process(ctx context.Context, input string) (string, error) 
 		}
 
 		// Store the fetched content in the search index
-		searchIndex.Index(u, content)
+		// searchIndex.Index(u, content)
 
 		aggregatedContent.WriteString(content)
 		aggregatedContent.WriteString("\n") // Separator between contents
@@ -319,7 +319,7 @@ func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
 // Process is the main method that processes the input using sqlite fts5
 func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
 	// Try to retrieve similar documents based on the input embedding
-	documents, err := db.RetrieveTopNDocuments(ctx, input, t.topN)
+	documents, err := db.RetrieveTopNDocuments(ctx, input, 10)
 	if err != nil {
 		return "", err
 	}

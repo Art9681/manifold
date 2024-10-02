@@ -2,9 +2,7 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 
 	"github.com/gorilla/websocket"
@@ -45,13 +43,13 @@ func handleWebSocketConnection(c echo.Context) error {
 	}
 
 	// Process the user prompt through the WorkflowManager
-	processedPrompt, err := globalWM.Run(context.Background(), wsMessage.ChatMessage)
-	if err != nil {
-		log.Printf("Error processing prompt through WorkflowManager: %v", err)
-	}
+	// processedPrompt, err := globalWM.Run(context.Background(), wsMessage.ChatMessage)
+	// if err != nil {
+	// 	log.Printf("Error processing prompt through WorkflowManager: %v", err)
+	// }
 
 	// Get the system instructions (assuming they are part of the message)
-	cpt := GetSystemTemplate(wsMessage.RoleInstructions, processedPrompt)
+	cpt := GetSystemTemplate(wsMessage.RoleInstructions, wsMessage.ChatMessage)
 
 	// Create a new CompletionRequest using the processed prompt
 	payload := &CompletionRequest{

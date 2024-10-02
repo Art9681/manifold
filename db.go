@@ -16,6 +16,7 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type SQLiteDB struct {
@@ -119,15 +120,29 @@ type ToolParam struct {
 	ParamValue string
 }
 
+// NewSQLiteDB initializes a new SQLiteDB with detailed logging.
 func NewSQLiteDB(dataPath string) (*SQLiteDB, error) {
-	dbPath := filepath.Join(dataPath, "eternaldata.db")
+	dbPath := filepath.Join(dataPath, "eternaldata.db") // Ensure consistency here
 
 	// Ensure the directory exists
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, fmt.Errorf("failed to create directory: %v", err)
 	}
 
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	// Configure GORM's logger for detailed output
+	newLogger := logger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags),
+		logger.Config{
+			SlowThreshold:             time.Second, // Slow SQL threshold
+			LogLevel:                  logger.Info, // Log level (Info for detailed logs)
+			IgnoreRecordNotFoundError: true,        // Ignore ErrRecordNotFound error for logger
+			Colorful:                  true,        // Enable color
+		},
+	)
+
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+		Logger: newLogger,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("error opening database: %v", err)
 	}
@@ -467,6 +482,26 @@ func loadToolsToDB(db *SQLiteDB, tools []ToolConfig) error {
 	return nil
 }
 
+// stopWords is a map of stop words that are common but carry little meaning in searches.
+var stopWords = map[string]bool{
+	"the":  true,
+	"is":   true,
+	"of":   true,
+	"and":  true,
+	"a":    true,
+	"an":   true,
+	"in":   true,
+	"to":   true,
+	"for":  true,
+	"with": true,
+	"on":   true,
+	"at":   true,
+	"by":   true,
+	"from": true,
+	"that": true,
+	"this": true,
+}
+
 // sanitizeFTSQuery cleans the query string for FTS5 by escaping and removing problematic characters.
 func sanitizeFTSQuery(query string) string {
 	// Replace single quotes with two single quotes for SQLite escaping
@@ -479,7 +514,19 @@ func sanitizeFTSQuery(query string) string {
 	// Trim leading and trailing whitespace
 	sanitized = strings.TrimSpace(sanitized)
 
-	return sanitized
+	// Split the query into terms
+	terms := strings.Fields(sanitized)
+	var filteredTerms []string
+
+	// Remove stop words
+	for _, term := range terms {
+		if !stopWords[strings.ToLower(term)] {
+			filteredTerms = append(filteredTerms, term)
+		}
+	}
+
+	// Rejoin the filtered terms
+	return strings.Join(filteredTerms, " ")
 }
 
 // RetrieveTopNDocuments performs a full-text search and returns the top N relevant documents.
@@ -487,17 +534,24 @@ func (sqldb *SQLiteDB) RetrieveTopNDocuments(ctx context.Context, query string, 
 	// Sanitize the query string to prevent syntax errors
 	sanitizedQuery := sanitizeFTSQuery(query)
 
-	// Prepare a slice to hold the search results
-	var results []string
+	// Split the query into terms
+	terms := strings.Fields(sanitizedQuery)
 
-	// Build the SQL query dynamically since FTS5 doesn't support placeholders in MATCH
+	if len(terms) == 0 {
+		return nil, errors.New("empty query after sanitization")
+	}
+
+	// Combine terms with OR to allow partial matches
+	ftsQuery := strings.Join(terms, " OR ")
+
+	// Build the SQL query dynamically
 	sqlQuery := fmt.Sprintf(`
         SELECT prompt, response 
         FROM chat_fts 
         WHERE chat_fts MATCH '%s' 
         ORDER BY bm25(chat_fts) 
         LIMIT %d;
-    `, sanitizedQuery, topN)
+    `, ftsQuery, topN)
 
 	// Log the constructed SQL query for debugging purposes
 	log.Printf("Executing FTS5 Query: %s", sqlQuery)
@@ -510,6 +564,7 @@ func (sqldb *SQLiteDB) RetrieveTopNDocuments(ctx context.Context, query string, 
 	defer rows.Close()
 
 	// Loop through the results and append them to the results slice
+	var results []string
 	for rows.Next() {
 		var prompt, response string
 		if err := rows.Scan(&prompt, &response); err != nil {

@@ -10,3 +10,4 @@ manifold_repo.txt
 embeddings.json
 cmd/repoconcat/manifold.txt
 cmd/repoconcat/README.md
+refactor_notes.md
