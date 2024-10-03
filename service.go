@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"syscall"
@@ -81,4 +82,35 @@ func (es *ExternalService) Stop(ctx context.Context) error {
 
 	fmt.Printf("%s stopped\n", es.config.Name)
 	return nil
+}
+
+// Additional function to handle workflow manager updates when a tool is toggled
+func UpdateWorkflowManagerForToolToggle(toolName string, enabled bool) {
+	wm := GetGlobalWorkflowManager()
+	if wm == nil {
+		log.Println("WorkflowManager is not initialized")
+		return
+	}
+
+	if enabled {
+		// Logic to register the tool with the WorkflowManager
+		tool, err := CreateToolByName(toolName)
+		if err != nil {
+			log.Printf("Failed to create tool '%s': %v", toolName, err)
+			return
+		}
+		err = wm.AddTool(tool, toolName)
+		if err != nil {
+			log.Printf("Failed to add tool '%s' to WorkflowManager: %v", toolName, err)
+		}
+		log.Printf("Tool '%s' has been enabled and added to WorkflowManager", toolName)
+	} else {
+		// Logic to unregister the tool from the WorkflowManager
+		err := wm.RemoveTool(toolName)
+		if err != nil {
+			log.Printf("Failed to remove tool '%s' from WorkflowManager: %v", toolName, err)
+		} else {
+			log.Printf("Tool '%s' has been disabled and removed from WorkflowManager", toolName)
+		}
+	}
 }

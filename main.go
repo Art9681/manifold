@@ -60,25 +60,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Example search query and top N results to retrieve
-	query := "Jax"
-	topN := 5
-
-	// Retrieve top N documents
-	results, err := db.RetrieveTopNDocuments(context.TODO(), query, topN)
-	if err != nil {
-		log.Fatalf("Error retrieving documents: %v", err)
-	}
-
-	// Print the results
-	for i, result := range results {
-		fmt.Printf("Result %d:\n%s\n\n", i+1, result)
-	}
-
 	// Load tools data into the database
-	// if err := loadToolsToDB(db, config.Tools); err != nil {
-	// 	log.Fatal(err)
-	// }
+	if err := loadToolsToDB(db, config.Tools); err != nil {
+		log.Fatal(err)
+	}
 
 	// Load completions roles into the database
 	if err := loadCompletionsRolesToDB(db, config.Roles); err != nil {

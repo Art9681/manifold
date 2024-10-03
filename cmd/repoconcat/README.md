@@ -6,10 +6,6 @@ $ go run main.go -paths="/path1,/path2" -types=".txt,.go" -ignore="_test" -outpu
 
 go run main.go -paths="/Users/arturoaquino/Documents/manifold" -types=".go" -ignore="_test" -output="manifold.txt" -recursive=false
 
-
 ctags -R --fields=+n --output-format=json -o tags.json /Users/arturoaquino/Documents/manifold
-
-
-
 
 go run main.go -paths="/Users/arturoaquino/Documents/manifold,/Users/arturoaquino/Documents/manifold/public/views," -types=".go,.html" -ignore="_test" -output="manifold.txt" -recursive=false

@@ -5,7 +5,7 @@
       style="background-color: var(--et-galactic-bg);">
       <h4 class="mb-3 text-center">Tools</h4>
       <div class="panel-body">
-        <div class="accordion  accordion-flush" id="toolsAccordion">
+        <div class="accordion accordion-flush" id="toolsAccordion">
 
           <!-- Teams Workflow -->
           <div class="accordion-item">
@@ -90,6 +90,8 @@
 
 <script>
   function toggleTool(toolName, isEnabled) {
+    console.log(`Toggling ${toolName} to ${isEnabled ? 'enabled' : 'disabled'}`);
+
     fetch(`/v1/tools/${toolName}/toggle`, {
       method: 'POST',
       headers: {
@@ -103,6 +105,7 @@
     })
     .catch(error => {
       console.error(`Error toggling ${toolName}:`, error);
+      alert(`Failed to toggle ${toolName}. Please try again.`);
     });
   }
 
@@ -117,7 +120,11 @@
   }
 
   function toggleWebGetTool() {
+    console.log('Toggling webget');
     const isEnabled = document.getElementById('webget-switch').checked;
+
+    console.log('isEnabled:', isEnabled);
+
     toggleTool('webget', isEnabled);
   }
 
@@ -125,5 +132,6 @@
     const isEnabled = document.getElementById('retrieval-switch').checked;
     toggleTool('retrieval', isEnabled);
   }
+</script>
 </script>
 {{end}}

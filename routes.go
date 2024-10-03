@@ -42,7 +42,7 @@ func setupRoutes(e *echo.Echo, config *Config) {
 	})
 
 	// Tool routes
-	// e.POST("/v1/tools/:toolName/toggle", handleToolToggle)
+	e.POST("/v1/tools/:toolName/toggle", handleToolToggle)
 
 	// Retrieval Augmented Generation (RAG) routes
 	// Route for storing text and embeddings

@@ -421,17 +421,26 @@ func (sqldb *SQLiteDB) CreateToolParam(toolID uint, paramName, paramValue string
 	return sqldb.db.Create(&toolParam).Error
 }
 
+// GetToolMetadataByName retrieves a tool's metadata by its name.
 func (sqldb *SQLiteDB) GetToolMetadataByName(name string) (*ToolMetadata, error) {
 	var tool ToolMetadata
 	err := sqldb.db.Preload("Params").Where("name = ?", name).First(&tool).Error
 	if err != nil {
-		return nil, fmt.Errorf("failed to find tool %s: %v", name, err)
+		return nil, fmt.Errorf("tool '%s' not found: %w", name, err)
 	}
 	return &tool, nil
 }
 
+// UpdateToolMetadataByName updates the 'enabled' status of a tool by its name.
 func (sqldb *SQLiteDB) UpdateToolMetadataByName(name string, enabled bool) error {
-	return sqldb.db.Model(&ToolMetadata{}).Where("name = ?", name).Update("enabled", enabled).Error
+	result := sqldb.db.Model(&ToolMetadata{}).Where("name = ?", name).Update("enabled", enabled)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update tool '%s' status: %w", name, result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("no rows affected")
+	}
+	return nil
 }
 
 func (sqldb *SQLiteDB) UpdateToolParam(toolID uint, paramName, paramValue string) error {
@@ -543,6 +552,9 @@ func (sqldb *SQLiteDB) RetrieveTopNDocuments(ctx context.Context, query string, 
 
 	// Combine terms with OR to allow partial matches
 	ftsQuery := strings.Join(terms, " OR ")
+
+	// Combine terms with NEAR to ensure proximity matches
+	// ftsQuery := strings.Join(terms, " NEAR ")
 
 	// Build the SQL query dynamically
 	sqlQuery := fmt.Sprintf(`

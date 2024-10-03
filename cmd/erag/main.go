@@ -1,146 +1,156 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"sync"
+	"path/filepath"
 
-	bleve "github.com/blevesearch/bleve/v2"
-	index "github.com/blevesearch/bleve_index_api"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	"github.com/xitongsys/parquet-go-source/local"
+	"github.com/xitongsys/parquet-go/reader"
 )
 
-func main() {
-	// Define the index path (you need to have an existing index)
-	indexPath := "/Users/arturoaquino/.manifold/search.bleve"
-	queryText := "WHat is the DNS issue with MacOS Sequoia?" // Replace this with the input text you want to search for
-	topN := 10                                               // Number of top documents to return
-
-	// Check if the index exists
-	exists, err := IndexExists(indexPath)
-	if err != nil {
-		log.Fatalf("Error checking if index exists: %v", err)
-	}
-
-	if !exists {
-		log.Fatalf("Index at path %s does not exist", indexPath)
-	}
-
-	// Open the existing index
-	idx, err := OpenIndex(indexPath)
-	if err != nil {
-		log.Fatalf("Error opening index: %v", err)
-	}
-	defer idx.Close()
-
-	// Perform the search
-	searchResults, err := idx.SearchTopN(queryText, topN)
-	if err != nil {
-		log.Fatalf("Error performing search: %v", err)
-	}
-
-	fmt.Println(searchResults.Hits)
-
-	// Print the search results
-	fmt.Printf("Search Results for '%s':\n", queryText)
-	for i, hit := range searchResults.Hits {
-		fmt.Printf("%d. ID: %s, Score: %f\n", i+1, hit.ID, hit.Score)
-
-		// Retrieve and print document contents
-		doc, err := idx.GetDocumentByID(hit.ID)
-		if err != nil {
-			log.Printf("Error retrieving document %s: %v", hit.ID, err)
-			continue
-		}
-
-		docJson, err := json.MarshalIndent(doc, "", "  ")
-		if err != nil {
-			log.Printf("Error converting document %s to JSON: %v", hit.ID, err)
-			continue
-		}
-
-		fmt.Printf("Document content:\n%s\n", string(docJson))
-	}
+// Passage structure to store passage entries (No custom ID now)
+type Passage struct {
+	Passage string `json:"Passage"` // Match JSON field from Parquet data
 }
 
-// SearchTopN performs a search and returns the top N results.
-func (idx *Index) SearchTopN(query string, topN int) (*bleve.SearchResult, error) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	if idx.closed {
-		return nil, fmt.Errorf("index is closed")
-	}
-
-	searchQuery := bleve.NewMatchQuery(query)
-	searchRequest := bleve.NewSearchRequest(searchQuery)
-	searchRequest.Size = topN // Limit the number of results to topN
-
-	return idx.bleveIndex.Search(searchRequest)
+// SQLiteDB structure to hold GORM DB object
+type SQLiteDB struct {
+	db *gorm.DB
 }
 
-// GetDocumentByID retrieves the stored fields of a document by its ID.
-func (idx *Index) GetDocumentByID(id string) (string, error) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
+// Initialize the SQLite database and perform auto-migration
+func initializeDatabase(dataPath string) (*SQLiteDB, error) {
+	dbPath := filepath.Join(dataPath, "eternaldata.db")
+	dbExists := fileExists(dbPath)
 
-	if idx.closed {
-		return "", fmt.Errorf("index is closed")
-	}
-
-	doc, err := idx.bleveIndex.Document(id)
-	if err != nil {
-		return "", err
-	}
-
-	// Visit each field in the document and convert the value to a string
-	doc.VisitFields(func(field index.Field) {
-		fieldName := field.Name()
-		fieldValue := string(field.Value()) // Convert byte slice to string
-
-		fmt.Printf("Field: %s, Value: %s\n", fieldName, fieldValue)
+	// Initialize the database connection
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Info), // Enable detailed logs
 	})
-
-	return "", nil
-}
-
-// IndexExists checks if an index exists at the given path.
-func IndexExists(indexPath string) (bool, error) {
-	_, err := os.Stat(indexPath)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// OpenIndex opens an existing Bleve index at the given path.
-func OpenIndex(indexPath string) (*Index, error) {
-	bleveIndex, err := bleve.Open(indexPath)
 	if err != nil {
 		return nil, err
 	}
-	return &Index{bleveIndex: bleveIndex, path: indexPath}, nil
-}
 
-// Index represents a Bleve index with common operations.
-type Index struct {
-	bleveIndex bleve.Index
-	path       string
-	mu         sync.Mutex
-	closed     bool
-}
+	// If the database doesn't exist, auto-migrate and create the FTS5 table
+	if !dbExists {
+		// Create the FTS5 virtual table for full-text search
+		err = db.Exec(`
+            CREATE VIRTUAL TABLE IF NOT EXISTS passage_fts USING fts5(
+                passage
+            );
+        `).Error
+		if err != nil {
+			return nil, fmt.Errorf("failed to create FTS5 table: %v", err)
+		}
 
-// Close closes the index.
-func (idx *Index) Close() error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-	if idx.closed {
-		return nil
+		log.Println("Database created and FTS5 table created")
+	} else {
+		log.Println("Existing database found")
 	}
-	idx.closed = true
-	return idx.bleveIndex.Close()
+
+	return &SQLiteDB{db: db}, nil
+}
+
+// Check if a file exists
+func fileExists(filename string) bool {
+	_, err := os.Stat(filename)
+	return err == nil
+}
+
+// InsertPassage inserts a passage entry into the FTS5 table
+func (sqldb *SQLiteDB) InsertPassage(ctx context.Context, passage Passage) error {
+	// Insert the passage into the FTS5 table (SQLite automatically assigns rowid)
+	err := sqldb.db.Exec(`
+        INSERT INTO passage_fts(passage) 
+        VALUES(?)
+    `, passage.Passage).Error
+	if err != nil {
+		return fmt.Errorf("failed to insert into FTS5: %v", err)
+	}
+
+	return nil
+}
+
+// LoadParquetData loads data from the Parquet file, converts it to JSON, and inserts it into the FTS5 table
+func (sqldb *SQLiteDB) LoadParquetData(ctx context.Context, parquetFilePath string) error {
+	// Open the Parquet file
+	fr, err := local.NewLocalFileReader(parquetFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to open parquet file: %v", err)
+	}
+	defer fr.Close()
+
+	// Create a new Parquet reader
+	pr, err := reader.NewParquetReader(fr, nil, 4)
+	if err != nil {
+		return fmt.Errorf("can't create parquet reader: %v", err)
+	}
+	defer pr.ReadStop()
+
+	// Get the number of rows in the Parquet file
+	numRows := int(pr.GetNumRows())
+
+	// Read all rows into a slice
+	rows, err := pr.ReadByNumber(numRows)
+	if err != nil {
+		return fmt.Errorf("can't read parquet file: %v", err)
+	}
+
+	// Convert the rows to JSON
+	jsonBs, err := json.Marshal(rows)
+	if err != nil {
+		return fmt.Errorf("failed to convert parquet data to JSON: %v", err)
+	}
+
+	// Print the JSON for debugging
+	log.Println(string(jsonBs))
+
+	// Unmarshal JSON data into Passage structs
+	var passages []Passage
+	err = json.Unmarshal(jsonBs, &passages)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal JSON data: %v", err)
+	}
+
+	// Insert each passage into the FTS5 table
+	for _, passage := range passages {
+		err := sqldb.InsertPassage(ctx, passage)
+		if err != nil {
+			return fmt.Errorf("failed to insert passage: %v", err)
+		}
+	}
+
+	log.Println("Parquet data inserted successfully")
+	return nil
+}
+
+func main() {
+	// Define the data path where the SQLite database will be stored
+	dataPath := "/Users/arturoaquino/.manifold/datasets"
+
+	// Define the path to the Parquet file
+	parquetFilePath := "/Users/arturoaquino/.manifold/datasets/part.0.parquet"
+
+	// Initialize the SQLite database
+	db, err := initializeDatabase(dataPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+
+	// Load and insert data from the Parquet file into the SQLite database
+	ctx := context.Background()
+	err = db.LoadParquetData(ctx, parquetFilePath)
+	if err != nil {
+		log.Fatalf("Failed to load data from Parquet file: %v", err)
+	}
+
+	log.Println("Database setup and Parquet data insertion complete")
 }

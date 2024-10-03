@@ -296,69 +296,6 @@
       return Alpine.store('dataStore').selectedRole;
     }
 
-    function toggleTool(toolName, enabled) {
-      const tools = Alpine.store('dataStore').data.Tools;
-      const tool = tools.find(t => t.Name === toolName);
-
-      if (tool) {
-        tool.Enabled = enabled;
-      } else {
-        console.error(`Tool with name ${toolName} not found.`);
-      }
-
-      // Print the data in the Alpine store
-      printData();
-    }
-
-    function toggleTeamTool() {
-      const enabled = document.getElementById('team-switch').checked;
-      toggleTool('team', enabled);
-    }
-
-    function toggleImageTool() {
-      const enabled = document.getElementById('img-switch').checked;
-      toggleTool('imggen', enabled);
-    }
-
-    function toggleMemoryTool() {
-      const enabled = document.getElementById('memory-switch').checked;
-      const slider = document.getElementById('memory-slider');
-      const valueLabel = document.getElementById('memory-topn-value');
-      valueLabel.innerText = slider.value;
-
-      const tools = Alpine.store('dataStore').data.Tools;
-      const tool = tools.find(t => t.Name === 'memory');
-
-      if (tool) {
-        tool.Enabled = enabled;
-        tool.Parameters.TopN = slider.value; // Assuming Parameters is an object with a TopN property
-      } else {
-        console.error('Memory tool not found.');
-      }
-    }
-
-    function toggleWebTool() {
-      const enabled = document.getElementById('webget-switch').checked;
-      toggleTool('webget', enabled);
-    }
-
-    function toggleWebSearchTool() {
-      const enabled = document.getElementById('websearch-switch').checked;
-      const slider = document.getElementById('websearch-slider');
-      const valueLabel = document.getElementById('websearch-topn-value');
-      valueLabel.innerText = slider.value;
-
-      const tools = Alpine.store('dataStore').data.Tools;
-      const tool = tools.find(t => t.Name === 'websearch');
-
-      if (tool) {
-        tool.Enabled = enabled;
-        tool.Parameters.TopN = slider.value; // Assuming Parameters is an object with a TopN property
-      } else {
-        console.error('Web Search tool not found.');
-      }
-    }
-
     // htmx.logAll();
   </script>
 </body>

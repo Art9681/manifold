@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"manifold/internal/web"
+
+	"github.com/labstack/echo/v4"
 )
 
 // Tool interface defines the contract for all tools.
@@ -190,8 +193,17 @@ func (t *WebSearchTool) Process(ctx context.Context, input string) (string, erro
 			if err != nil {
 				log.Printf("Failed to fetch content from URL %s: %v", url, err)
 				resultsChan <- result{content: "", err: err}
-				return
+				//return
 			}
+
+			// If the content does not start with 'I do not have access to real-time information, including news updates.', save it
+			if !strings.HasPrefix(content, "I do not have access to real-time information, including news updates.") {
+				err = SaveChatTurn(input, content, time.Now().Format(time.RFC3339))
+				if err != nil {
+					log.Printf("Failed to save web document: %v", err)
+				}
+			}
+
 			resultsChan <- result{content: content, err: nil}
 		}(u)
 	}
@@ -202,20 +214,21 @@ func (t *WebSearchTool) Process(ctx context.Context, input string) (string, erro
 		close(resultsChan)
 	}()
 
-	var aggregatedContent strings.Builder
-	for res := range resultsChan {
-		if res.err == nil && res.content != "" {
-			aggregatedContent.WriteString(res.content)
-			aggregatedContent.WriteString("\n") // Separator between contents
-		}
-	}
+	// var aggregatedContent strings.Builder
 
-	finalResult := aggregatedContent.String()
-	if finalResult == "" {
-		return input, errors.New("no tools processed the input or no result generated")
-	}
+	// for res := range resultsChan {
+	// 	if res.err == nil && res.content != "" {
+	// 		aggregatedContent.WriteString(res.content)
+	// 		aggregatedContent.WriteString("\n") // Separator between contents
+	// 	}
+	// }
 
-	return finalResult, nil
+	// finalResult := aggregatedContent.String()
+	// if finalResult == "" {
+	// 	return input, errors.New("no tools processed the input or no result generated")
+	// }
+
+	return "", nil
 }
 
 // Enabled returns the enabled status of the tool.
@@ -430,4 +443,55 @@ func GenerateEmbedding(text string) ([]float64, error) {
 	}
 
 	return embeddings, nil
+}
+
+// handleToolToggle handles the enabling or disabling of a tool.
+// It expects a JSON payload with the "enabled" field.
+func handleToolToggle(c echo.Context) error {
+	// Extract the toolName from the URL parameter
+	toolName := c.Param("toolName")
+
+	// Define a struct to parse the incoming JSON payload
+	var requestPayload struct {
+		Enabled bool `json:"enabled"`
+	}
+
+	// Bind the JSON payload to the struct
+	if err := c.Bind(&requestPayload); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid request payload",
+		})
+	}
+
+	// Fetch the tool metadata from the database
+	tool, err := db.GetToolMetadataByName(toolName)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("Tool '%s' not found", toolName),
+		})
+	}
+
+	// Check if the tool is already in the requested state
+	if tool.Enabled == requestPayload.Enabled {
+		return c.JSON(http.StatusOK, map[string]string{
+			"message": fmt.Sprintf("Tool '%s' is already %s", toolName, map[bool]string{true: "enabled", false: "disabled"}[tool.Enabled]),
+		})
+	}
+
+	log.Printf("Toggling tool '%s' to %s", toolName, map[bool]string{true: "enabled", false: "disabled"}[requestPayload.Enabled])
+
+	// Update the tool's enabled status in the database
+	if err := db.UpdateToolMetadataByName(tool.Name, requestPayload.Enabled); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": fmt.Sprintf("Failed to update tool '%s' status", toolName),
+		})
+	}
+
+	// Update the WorkflowManager based on the new status
+	UpdateWorkflowManagerForToolToggle(toolName, requestPayload.Enabled)
+
+	// Respond with a success message
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": fmt.Sprintf("Tool '%s' has been %s", toolName, map[bool]string{true: "enabled", false: "disabled"}[requestPayload.Enabled]),
+	})
 }
