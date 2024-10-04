@@ -335,7 +335,7 @@ func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
 // Process is the main method that processes the input using sqlite fts5
 func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
 	// Try to retrieve similar documents based on the input embedding
-	documents, err := db.RetrieveTopNDocuments(ctx, input, 10)
+	documents, err := db.RetrieveTopNDocuments(ctx, input, 1)
 	if err != nil {
 		return "", err
 	}

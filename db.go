@@ -516,8 +516,8 @@ func sanitizeFTSQuery(query string) string {
 	// Replace single quotes with two single quotes for SQLite escaping
 	sanitized := strings.ReplaceAll(query, "'", "''")
 
-	// Remove question marks and other punctuation except for '*' (used for prefix searches)
-	re := regexp.MustCompile(`[^\w\s*]`)
+	// Remove unwanted punctuation except for '"' and '*'
+	re := regexp.MustCompile(`[^\w\s*"*]`)
 	sanitized = re.ReplaceAllString(sanitized, "")
 
 	// Trim leading and trailing whitespace
@@ -530,6 +530,7 @@ func sanitizeFTSQuery(query string) string {
 	// Remove stop words
 	for _, term := range terms {
 		if !stopWords[strings.ToLower(term)] {
+			// Optionally, you can handle phrases or boolean operators here
 			filteredTerms = append(filteredTerms, term)
 		}
 	}
@@ -538,60 +539,103 @@ func sanitizeFTSQuery(query string) string {
 	return strings.Join(filteredTerms, " ")
 }
 
-// RetrieveTopNDocuments performs a full-text search and returns the top N relevant documents.
 func (sqldb *SQLiteDB) RetrieveTopNDocuments(ctx context.Context, query string, topN int) ([]string, error) {
-	// Sanitize the query string to prevent syntax errors
+
+	log.Printf("Retrieving top %d documents for query: %s", topN, query)
+
+	// Step 1: Initial query sanitization and execution
 	sanitizedQuery := sanitizeFTSQuery(query)
+	results, err := sqldb.executeFTSQuery(sanitizedQuery, topN)
+	ragInstructions := "Use the previous information to answer the following message if it is relevant to answer or complete the following message:\n"
 
-	// Split the query into terms
+	// If results are found, return them
+	if err == nil && len(results) > topN {
+		// Append instructions for the RAG model
+		results = append(results, ragInstructions)
+		return results, nil
+	}
+
+	// Step 2: Generalize by removing stop words or less important terms
 	terms := strings.Fields(sanitizedQuery)
-
-	if len(terms) == 0 {
-		return nil, errors.New("empty query after sanitization")
-	}
-
-	// Combine terms with OR to allow partial matches
-	ftsQuery := strings.Join(terms, " OR ")
-
-	// Combine terms with NEAR to ensure proximity matches
-	// ftsQuery := strings.Join(terms, " NEAR ")
-
-	// Build the SQL query dynamically
-	sqlQuery := fmt.Sprintf(`
-        SELECT prompt, response 
-        FROM chat_fts 
-        WHERE chat_fts MATCH '%s' 
-        ORDER BY bm25(chat_fts, 1.0, 0.5) DESC
-        LIMIT %d;
-    `, ftsQuery, topN)
-
-	// Log the constructed SQL query for debugging purposes
-	log.Printf("Executing FTS5 Query: %s", sqlQuery)
-
-	// Execute the dynamically built query
-	rows, err := sqldb.db.Raw(sqlQuery).Rows()
-	if err != nil {
-		return nil, fmt.Errorf("error querying database: %v", err)
-	}
-	defer rows.Close()
-
-	// Loop through the results and append them to the results slice
-	var results []string
-	for rows.Next() {
-		var prompt, response string
-		if err := rows.Scan(&prompt, &response); err != nil {
-			return nil, fmt.Errorf("error scanning row: %v", err)
+	for len(terms) > 1 {
+		terms = removeLessImportantTerms(terms)
+		generalizedQuery := strings.Join(terms, " ")
+		results, err = sqldb.executeFTSQuery(generalizedQuery, topN)
+		if err == nil && len(results) > topN {
+			// Append instructions for the RAG model
+			results = append(results, ragInstructions)
+			return results, nil
 		}
-		result := fmt.Sprintf("Prompt: %s\nResponse: %s", prompt, response)
-		results = append(results, result)
 	}
 
-	// Check for errors encountered during iteration
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating over rows: %v", err)
+	// Step 3: Apply prefix matching for partial matches
+	terms = strings.Fields(sanitizedQuery)
+	for i, term := range terms {
+		terms[i] = fmt.Sprintf("%s*", term)
+	}
+	prefixQuery := strings.Join(terms, " ")
+	results, err = sqldb.executeFTSQuery(prefixQuery, topN)
+	if err == nil && len(results) > topN {
+		// Append instructions for the RAG model
+		results = append(results, ragInstructions)
+		return results, nil
 	}
 
-	return results, nil
+	// Step 4: Optionally apply fuzzy matching using Levenshtein distance
+	// (You can implement this if needed based on your previous logic.)
+
+	// Step 5: Wildcard matching for the most general case
+	terms = strings.Fields(sanitizedQuery)
+	finalQuery := strings.Join(terms, " OR ")
+	results, err = sqldb.executeFTSQuery(finalQuery, topN)
+	if err == nil && len(results) > 0 {
+		// Append instructions for the RAG model
+		results = append(results, ragInstructions)
+		return results, nil
+	}
+
+	// If no results are found at all, return an error or empty list
+	return nil, fmt.Errorf("no documents found after generalizing query")
+}
+
+// Helper function to remove less important terms (like stop words)
+func removeLessImportantTerms(terms []string) []string {
+	if len(terms) > 1 {
+		return terms[:len(terms)-1] // Remove one term at a time (simplified strategy)
+	}
+	return terms
+}
+
+// Helper function to execute FTS5 query with given query string and return results
+func (sqldb *SQLiteDB) executeFTSQuery(ftsQuery string, topN int) ([]string, error) {
+	var results []struct {
+		Prompt   string
+		Response string
+	}
+
+	// Log the query for debugging purposes
+	log.Printf("Executing FTS5 Query: %s", ftsQuery)
+
+	// Execute the FTS5 query with match syntax
+	err := sqldb.db.Raw(`
+		SELECT prompt, response 
+		FROM chat_fts 
+		WHERE chat_fts MATCH ? 
+		ORDER BY bm25(chat_fts, 1.0, 1.0) DESC
+		LIMIT ?;
+	`, ftsQuery, topN).Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// Format results
+	var formattedResults []string
+	for _, row := range results {
+		formatted := fmt.Sprintf("%s\n%s\n", row.Prompt, row.Response)
+		formattedResults = append(formattedResults, formatted)
+	}
+
+	return formattedResults, nil
 }
 
 func embeddingToBlob(embedding []float64) []byte {

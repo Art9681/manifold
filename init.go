@@ -101,7 +101,7 @@ func initializeDatabase(dataPath string) (*SQLiteDB, error) {
 			CREATE VIRTUAL TABLE IF NOT EXISTS chat_fts USING fts5(
 				prompt,
 				response,
-				tokenize = "unicode61 remove_diacritics 1 tokenchars '.@'"
+				tokenize = "porter"
 			);
         `).Error
 		if err != nil {
