@@ -335,7 +335,7 @@ func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
 // Process is the main method that processes the input using sqlite fts5
 func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
 	// Try to retrieve similar documents based on the input embedding
-	documents, err := db.RetrieveTopNDocuments(ctx, input, 1)
+	documents, err := db.RetrieveTopNDocuments(ctx, input, 20)
 	if err != nil {
 		return "", err
 	}
@@ -390,7 +390,7 @@ func SaveChatTurn(prompt, response, timestamp string) error {
 	chat := Chat{
 		Prompt:    prompt,
 		Response:  response,
-		ModelName: "model_name",  // Update with actual model name
+		ModelName: "assistant",   // Update with actual model name
 		Embedding: embeddingBlob, // Store the embedding as BLOB
 	}
 
@@ -401,9 +401,9 @@ func SaveChatTurn(prompt, response, timestamp string) error {
 
 	// Insert the prompt and response into the chat_fts table for full-text search
 	if err := db.db.Exec(`
-        INSERT INTO chat_fts (prompt, response) 
-        VALUES (?, ?)
-    `, prompt, response).Error; err != nil {
+        INSERT INTO chat_fts (prompt, response, modelName) 
+        VALUES (?, ?, ?)
+    `, prompt, response, "assistant").Error; err != nil {
 		return fmt.Errorf("failed to save chat turn in FTS5 table: %w", err)
 	}
 
@@ -415,7 +415,7 @@ func GenerateEmbedding(text string) ([]float64, error) {
 	textArr := []string{text}
 	embeddingRequest := EmbeddingRequest{
 		Input:          textArr,
-		Model:          "eternal",
+		Model:          "assistant",
 		EncodingFormat: "float",
 	}
 

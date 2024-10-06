@@ -34,13 +34,13 @@ type Chat struct {
 	Prompt    string `json:"prompt"`
 	Response  string `json:"response"`
 	ModelName string `json:"modelName"`
-	// Embedding is no longer stored here
 }
 
 // ChatEntry represents an entry in the FTS5 table with both prompt and response.
 type ChatEntry struct {
-	Prompt   string `json:"prompt"`   // Corresponds to the passage from Parquet
-	Response string `json:"response"` // Initialized as empty
+	Prompt    string `json:"prompt"`   // Corresponds to the passage from Parquet
+	Response  string `json:"response"` // Initialized as empty
+	ModelName string `json:"modelName"`
 }
 
 // SQLiteDB structure to hold the *sql.DB object
@@ -123,7 +123,8 @@ func initializeDatabase(dataPath string) (*SQLiteDB, error) {
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				prompt TEXT NOT NULL,
 				response TEXT,
-				modelName TEXT
+				model_name TEXT,
+				embedding BLOB
 			);
 		`
 		_, err = tx.Exec(createChatsTable)
@@ -137,6 +138,7 @@ func initializeDatabase(dataPath string) (*SQLiteDB, error) {
 			CREATE VIRTUAL TABLE IF NOT EXISTS chat_fts USING fts5(
 				prompt,
 				response,
+				modelName,
 				tokenize = "porter"
 			);
 		`
@@ -175,10 +177,10 @@ func fileExists(filename string) bool {
 // InsertChatEntry inserts a chat entry into the FTS5 table.
 func (sqldb *SQLiteDB) InsertChatEntry(ctx context.Context, entry ChatEntry) error {
 	query := `
-		INSERT INTO chat_fts(prompt, response)
-		VALUES (?, ?);
+		INSERT INTO chat_fts(prompt, response, modelName)
+		VALUES (?, ?, ?);
 	`
-	_, err := sqldb.db.ExecContext(ctx, query, entry.Prompt, entry.Response)
+	_, err := sqldb.db.ExecContext(ctx, query, entry.Prompt, entry.Response, "assistant")
 	if err != nil {
 		return fmt.Errorf("failed to insert into FTS5: %v", err)
 	}
@@ -202,14 +204,20 @@ func (sqldb *SQLiteDB) UpsertChat(ctx context.Context, chat *Chat, embedding []f
 		}
 	}()
 
+	// Serialize the embedding
+	serializedEmbedding, err := sqlite_vec.SerializeFloat32(embedding)
+	if err != nil {
+		return fmt.Errorf("failed to serialize embedding: %v", err)
+	}
+
 	// Insert or update the chats table
 	if chat.ID == 0 {
 		// Insert new chat
 		insertChatQuery := `
-			INSERT INTO chats (prompt, response, modelName)
-			VALUES (?, ?, ?);
+			INSERT INTO chats (prompt, response, model_name, embedding)
+			VALUES (?, ?, ?, ?);
 		`
-		result, err := tx.ExecContext(ctx, insertChatQuery, chat.Prompt, chat.Response, chat.ModelName)
+		result, err := tx.ExecContext(ctx, insertChatQuery, chat.Prompt, chat.Response, "assistant", serializedEmbedding)
 		if err != nil {
 			return fmt.Errorf("failed to insert into chats table: %v", err)
 		}
@@ -224,16 +232,10 @@ func (sqldb *SQLiteDB) UpsertChat(ctx context.Context, chat *Chat, embedding []f
 			SET prompt = ?, response = ?, modelName = ?
 			WHERE id = ?;
 		`
-		_, err = tx.ExecContext(ctx, updateChatQuery, chat.Prompt, chat.Response, chat.ModelName, chat.ID)
+		_, err = tx.ExecContext(ctx, updateChatQuery, chat.Prompt, chat.Response, "assistant", chat.ID)
 		if err != nil {
 			return fmt.Errorf("failed to update chats table: %v", err)
 		}
-	}
-
-	// Serialize the embedding
-	serializedEmbedding, err := sqlite_vec.SerializeFloat32(embedding)
-	if err != nil {
-		return fmt.Errorf("failed to serialize embedding: %v", err)
 	}
 
 	// Insert or replace the embedding in vec_items using REPLACE INTO
@@ -413,15 +415,16 @@ func (sqldb *SQLiteDB) LoadParquetData(ctx context.Context, parquetFilePath stri
 
 		// Create the ChatEntry for the FTS5 table
 		chatEntries = append(chatEntries, ChatEntry{
-			Prompt:   prompt,
-			Response: "", // Initialize response as an empty string
+			Prompt:    prompt,
+			Response:  "", // Initialize response as an empty string
+			ModelName: "assistant",
 		})
 
 		// Initialize the Chat struct with default values
 		chats = append(chats, &Chat{
 			Prompt:    prompt,
-			Response:  "",              // Initialize response as an empty string
-			ModelName: "default_model", // Default model name
+			Response:  "",          // Initialize response as an empty string
+			ModelName: "assistant", // Default model name
 		})
 	}
 

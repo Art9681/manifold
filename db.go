@@ -150,6 +150,38 @@ func NewSQLiteDB(dataPath string) (*SQLiteDB, error) {
 	return &SQLiteDB{db: db}, nil
 }
 
+// Enable SQLite extension loading
+func (sqldb *SQLiteDB) EnableSQLiteExtensionLoading() error {
+	// Enable extension loading via SQLite PRAGMA
+	db := sqldb.db
+
+	err := db.Exec("PRAGMA foreign_keys = ON;")
+	if err != nil {
+		return fmt.Errorf("could not enable foreign keys: %w", err)
+	}
+
+	// Enable extension loading (important for loading sqlite-vec)
+	err = sqldb.db.Exec("PRAGMA load_extension = 1;")
+	if err != nil {
+		return fmt.Errorf("could not enable extension loading: %w", err)
+	}
+
+	return nil
+}
+
+// Load the sqlite-vec extension
+func (sqldb *SQLiteDB) LoadVecExtension() error {
+	// Load the sqlite-vec extension
+	db := sqldb.db
+
+	err := db.Exec("SELECT load_extension('libsqlitevec.dylib', 'sqlite3_vec_init');")
+	if err != nil {
+		return fmt.Errorf("could not load sqlite-vec extension: %w", err)
+	}
+
+	return nil
+}
+
 func (sqldb *SQLiteDB) AutoMigrate(models ...interface{}) error {
 	for _, model := range models {
 		if err := sqldb.db.AutoMigrate(model); err != nil {
@@ -309,7 +341,7 @@ func AddSelectedModel(db *gorm.DB, modelName string) error {
 }
 
 func RemoveSelectedModel(db *gorm.DB, modelName string) error {
-	return db.Where("model_name = ?", modelName).Delete(&SelectedModels{}).Error
+	return db.Where("modelName = ?", modelName).Delete(&SelectedModels{}).Error
 }
 
 func GetSelectedModels(db *gorm.DB) ([]SelectedModels, error) {
@@ -609,8 +641,9 @@ func removeLessImportantTerms(terms []string) []string {
 // Helper function to execute FTS5 query with given query string and return results
 func (sqldb *SQLiteDB) executeFTSQuery(ftsQuery string, topN int) ([]string, error) {
 	var results []struct {
-		Prompt   string
-		Response string
+		Prompt     string
+		Response   string
+		Similarity float64
 	}
 
 	// Log the query for debugging purposes
@@ -621,7 +654,7 @@ func (sqldb *SQLiteDB) executeFTSQuery(ftsQuery string, topN int) ([]string, err
 		SELECT prompt, response 
 		FROM chat_fts 
 		WHERE chat_fts MATCH ? 
-		ORDER BY bm25(chat_fts, 1.0, 1.0) DESC
+		ORDER BY bm25(chat_fts, 1.5, 1.0) DESC
 		LIMIT ?;
 	`, ftsQuery, topN).Scan(&results).Error
 	if err != nil {

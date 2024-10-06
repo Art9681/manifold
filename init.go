@@ -101,6 +101,7 @@ func initializeDatabase(dataPath string) (*SQLiteDB, error) {
 			CREATE VIRTUAL TABLE IF NOT EXISTS chat_fts USING fts5(
 				prompt,
 				response,
+				modelName,
 				tokenize = "porter"
 			);
         `).Error
