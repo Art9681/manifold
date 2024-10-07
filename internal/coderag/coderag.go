@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -23,6 +24,17 @@ type FunctionInfo struct {
 	DirectCalls []string
 	Package     string
 	Type        string // e.g., function, method, variable
+}
+
+// RelationshipInfo encapsulates the relationships of a function.
+type RelationshipInfo struct {
+	FunctionName      string
+	Calls             []string
+	CalledBy          []string
+	CallsFilePaths    []string
+	CalledByFilePaths []string
+	TotalCalls        int
+	TotalCalledBy     int
 }
 
 // CodeIndex stores the indexed information about the codebase.
@@ -161,7 +173,7 @@ func (idx *CodeIndex) extractVariables(genDecl *ast.GenDecl, path, packageName s
 				idx.Functions[name.Name] = &FunctionInfo{
 					Name:       name.Name,
 					FilePath:   path,
-					CalledBy:   make(map[string]struct{}), // Initialize maps to prevent nil map assignments
+					CalledBy:   make(map[string]struct{}),
 					Calls:      make(map[string]struct{}),
 					LineNumber: position.Line,
 					Type:       "variable",
@@ -398,4 +410,106 @@ func (idx *CodeIndex) GetFilesCalledByFunction(funcName string) ([]string, error
 	}
 
 	return files, nil
+}
+
+// HandleUserPrompt processes a user prompt, matches it to a function, and returns its relationships.
+func (idx *CodeIndex) HandleUserPrompt(prompt string) (*RelationshipInfo, error) {
+	funcName, err := extractFunctionName(prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := idx.GetFunctionInfo(funcName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect functions that this function calls
+	calls := make([]string, 0, len(info.Calls))
+	callsFilePaths := make([]string, 0, len(info.Calls))
+	for called := range info.Calls {
+		calls = append(calls, called)
+		if calledInfo, exists := idx.Functions[called]; exists {
+			callsFilePaths = append(callsFilePaths, calledInfo.FilePath)
+		} else {
+			callsFilePaths = append(callsFilePaths, "External/Unknown")
+		}
+	}
+
+	// Collect functions that call this function
+	calledBy := make([]string, 0, len(info.CalledBy))
+	calledByFilePaths := make([]string, 0, len(info.CalledBy))
+	for caller := range info.CalledBy {
+		calledBy = append(calledBy, caller)
+		if callerInfo, exists := idx.Functions[caller]; exists {
+			calledByFilePaths = append(calledByFilePaths, callerInfo.FilePath)
+		} else {
+			calledByFilePaths = append(calledByFilePaths, "External/Unknown")
+		}
+	}
+
+	relationship := &RelationshipInfo{
+		FunctionName:      funcName,
+		Calls:             calls,
+		CalledBy:          calledBy,
+		CallsFilePaths:    callsFilePaths,
+		CalledByFilePaths: calledByFilePaths,
+		TotalCalls:        len(calls),
+		TotalCalledBy:     len(calledBy),
+	}
+
+	return relationship, nil
+}
+
+// extractFunctionName parses the user prompt to extract the function name.
+// It handles both "function SaveChatTurn" and "SaveChatTurn function" patterns.
+func extractFunctionName(prompt string) (string, error) {
+	// Regular expression to match:
+	// 1. "function SaveChatTurn" or "method SaveChatTurn"
+	// 2. "SaveChatTurn function" or "SaveChatTurn method"
+	re := regexp.MustCompile(`(?i)(?:function|method)\s+([A-Za-z0-9_]+)|([A-Za-z0-9_]+)\s+(?:function|method)`)
+
+	matches := re.FindStringSubmatch(prompt)
+	if len(matches) < 2 {
+		return "", fmt.Errorf("unable to extract function name from prompt")
+	}
+
+	// matches[1] corresponds to the first capture group
+	// matches[2] corresponds to the second capture group
+	if matches[1] != "" {
+		return matches[1], nil
+	} else if matches[2] != "" {
+		return matches[2], nil
+	}
+
+	return "", fmt.Errorf("unable to extract function name from prompt")
+}
+
+// displayRelationshipInfo formats and prints the RelationshipInfo.
+func displayRelationshipInfo(rel *RelationshipInfo) {
+	fmt.Printf("\n=== Relationships for function '%s' ===\n\n", rel.FunctionName)
+
+	// Display functions that this function calls
+	if rel.TotalCalls > 0 {
+		fmt.Printf("Functions it calls (%d):\n", rel.TotalCalls)
+		for i, calledFunc := range rel.Calls {
+			fmt.Printf("  %d. %s (File: %s)\n", i+1, calledFunc, rel.CallsFilePaths[i])
+		}
+	} else {
+		fmt.Printf("Functions it calls: None\n")
+	}
+
+	fmt.Println()
+
+	// Display functions that call this function
+	if rel.TotalCalledBy > 0 {
+		fmt.Printf("Functions that call it (%d):\n", rel.TotalCalledBy)
+		for i, callerFunc := range rel.CalledBy {
+			fmt.Printf("  %d. %s (File: %s)\n", i+1, callerFunc, rel.CalledByFilePaths[i])
+		}
+	} else {
+		fmt.Printf("Functions that call it: None\n")
+	}
+
+	fmt.Println()
 }
