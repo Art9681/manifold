@@ -1,3 +1,4 @@
+// reporag.go
 package main
 
 import (
@@ -11,16 +12,25 @@ import (
 )
 
 func main() {
+	// Load configuration for OpenAI API
+	cfg, err := coderag.LoadConfig()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+
 	// Initialize the CodeIndex
 	index := coderag.NewCodeIndex()
 
 	// Index the repository
-	repoPath := "/Users/arturoaquino/Documents/manifold"
+	repoPath := "/local/path/to/your/repo"
 	fmt.Printf("Indexing repository at: %s\n", repoPath)
-	if err := index.IndexRepository(repoPath); err != nil {
+	if err := index.IndexRepository(repoPath, cfg); err != nil {
 		log.Fatalf("Indexing failed: %v", err)
 	}
-	fmt.Println("Indexing completed successfully.\n")
+	fmt.Println("Indexing completed successfully.")
+
+	// Start the API server in a separate goroutine
+	go index.StartAPIServer(8080)
 
 	// Create a buffered reader for user input
 	reader := bufio.NewReader(os.Stdin)
@@ -34,50 +44,87 @@ func main() {
 			continue
 		}
 
-		// Trim whitespace and check for exit condition
+		// Trim any extra spaces/newlines from user input
 		prompt = strings.TrimSpace(prompt)
-		if strings.EqualFold(prompt, "exit") {
-			fmt.Println("Exiting the application.")
+
+		// Exit if the user types "exit"
+		if strings.ToLower(prompt) == "exit" {
+			fmt.Println("Exiting the application. Goodbye!")
 			break
 		}
 
-		// Handle the user prompt to retrieve relationships
-		relationship, err := index.HandleUserPrompt(prompt)
-		if err != nil {
-			log.Printf("Error: %v\n", err)
+		// Handle special commands like "refactor" to show refactoring opportunities
+		if strings.ToLower(prompt) == "refactor" {
+			displayRefactoringOpportunities(index)
 			continue
 		}
 
-		// Display the relationships
-		displayRelationshipInfo(relationship)
+		// Handle the user's prompt to query a function
+		relationshipInfo, err := index.HandleUserPrompt(prompt)
+		if err != nil {
+			fmt.Printf("Error processing query: %v\n", err)
+			continue
+		}
+
+		// Display the relationship information, comments, and source code
+		displayRelationshipInfo(relationshipInfo)
 	}
 }
 
-// displayRelationshipInfo formats and prints the RelationshipInfo.
-func displayRelationshipInfo(rel *coderag.RelationshipInfo) {
-	fmt.Printf("\n=== Relationships for function '%s' ===\n\n", rel.FunctionName)
+// displayRelationshipInfo displays detailed information about a function or method.
+func displayRelationshipInfo(info *coderag.RelationshipInfo) {
+	fmt.Printf("\nFunction: %s\n", info.FunctionName)
+	fmt.Printf("Total Calls: %d\n", info.TotalCalls)
+	fmt.Printf("Total Called By: %d\n", info.TotalCalledBy)
 
-	// Display functions that this function calls
-	if rel.TotalCalls > 0 {
-		fmt.Printf("Functions it calls (%d):\n", rel.TotalCalls)
-		for i, calledFunc := range rel.Calls {
-			fmt.Printf("  %d. %s (File: %s)\n", i+1, calledFunc, rel.CallsFilePaths[i])
-		}
+	// Display function comments if available
+	if info.Comments != "" {
+		fmt.Printf("\nComments:\n%s\n", info.Comments)
 	} else {
-		fmt.Printf("Functions it calls: None\n")
+		fmt.Println("\nComments: None")
 	}
 
-	fmt.Println()
-
-	// Display functions that call this function
-	if rel.TotalCalledBy > 0 {
-		fmt.Printf("Functions that call it (%d):\n", rel.TotalCalledBy)
-		for i, callerFunc := range rel.CalledBy {
-			fmt.Printf("  %d. %s (File: %s)\n", i+1, callerFunc, rel.CalledByFilePaths[i])
-		}
+	// Display the summary if available
+	if info.Summary != "" {
+		fmt.Printf("\nSummary:\n%s\n", info.Summary)
 	} else {
-		fmt.Printf("Functions that call it: None\n")
+		fmt.Println("\nSummary: None")
 	}
 
+	// Display the source code of the function
+	fmt.Printf("\nSource Code:\n%s\n", info.Code)
+
+	// Display the functions this function calls
+	fmt.Printf("\nFunctions Called by %s:\n", info.FunctionName)
+	if len(info.Calls) > 0 {
+		for i, calledFunc := range info.Calls {
+			fmt.Printf("  %d. %s (File: %s)\n", i+1, calledFunc, info.CallsFilePaths[i])
+		}
+	} else {
+		fmt.Println("  None")
+	}
+
+	// Display the functions that call this function
+	fmt.Printf("\nFunctions Calling %s:\n", info.FunctionName)
+	if len(info.CalledBy) > 0 {
+		for i, callerFunc := range info.CalledBy {
+			fmt.Printf("  %d. %s (File: %s)\n", i+1, callerFunc, info.CalledByFilePaths[i])
+		}
+	} else {
+		fmt.Println("  None")
+	}
 	fmt.Println()
+}
+
+// displayRefactoringOpportunities displays potential refactoring opportunities found in the codebase.
+func displayRefactoringOpportunities(index *coderag.CodeIndex) {
+	fmt.Println("\nRefactoring Opportunities:")
+	if len(index.RefactoringOpportunities) == 0 {
+		fmt.Println("No refactoring opportunities found.")
+		return
+	}
+
+	for i, opp := range index.RefactoringOpportunities {
+		fmt.Printf("%d. %s\n   Location: %s\n   Severity: %s\n\n", i+1, opp.Description, opp.Location, opp.Severity)
+	}
 }
