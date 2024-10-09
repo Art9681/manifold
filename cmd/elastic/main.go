@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,54 @@ import (
 
 	elasticsearch "github.com/elastic/go-elasticsearch/v8"
 )
+
+// Updated FunctionInfo matching main.go's struct
+type FunctionInfo struct {
+	Name          string    `json:"name"`
+	Comments      string    `json:"comments"`
+	Code          string    `json:"code"`
+	CallsCount    int       `json:"calls_count"`
+	CalledByCount int       `json:"called_by_count"`
+	Embedding     []float64 `json:"embedding"`
+}
+
+// Updated RelationshipInfo matching main.go's struct
+type RelationshipInfo struct {
+	Name              string   `json:"name"`
+	Comments          string   `json:"comments"`
+	Code              string   `json:"code"`
+	CallsCount        int      `json:"calls_count"`
+	CalledByCount     int      `json:"called_by_count"`
+	Calls             []string `json:"calls"`
+	CalledBy          []string `json:"called_by"`
+	Summary           string   `json:"summary"`
+	CallsFilePaths    []string `json:"calls_file_paths"`
+	CalledByFilePaths []string `json:"called_by_file_paths"`
+}
+
+type EmbeddingRequest struct {
+	Input          []string `json:"input"`
+	Model          string   `json:"model"`
+	EncodingFormat string   `json:"encoding_format"`
+}
+
+type EmbeddingResponse struct {
+	Object string       `json:"object"`
+	Data   []Embedding  `json:"data"`
+	Model  string       `json:"model"`
+	Usage  UsageMetrics `json:"usage"`
+}
+
+type UsageMetrics struct {
+	PromptTokens int `json:"prompt_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+}
+
+type Embedding struct {
+	Object    string    `json:"object"`
+	Embedding []float64 `json:"embedding"`
+	Index     int       `json:"index"`
+}
 
 func main() {
 	// Load configuration for OpenAI API
@@ -34,7 +83,7 @@ func main() {
 	index := coderag.NewCodeIndex()
 
 	// Index the repository and store data in Elasticsearch
-	repoPath := "/Users/arturoaquino/Documents/manifold"
+	repoPath := "/path/to/repo"
 	fmt.Printf("Indexing repository at: %s\n", repoPath)
 	if err := indexRepositoryToElasticsearch(repoPath, cfg, esClient); err != nil {
 		log.Fatalf("Indexing failed: %v", err)
@@ -85,8 +134,6 @@ func main() {
 
 // initElasticsearchClient initializes the Elasticsearch client.
 func initElasticsearchClient() (*elasticsearch.Client, error) {
-	//cert, _ := os.ReadFile("ca.crt")
-
 	cfg := elasticsearch.Config{
 		Addresses: []string{
 			"https://192.168.0.153:9200",
@@ -101,7 +148,57 @@ func initElasticsearchClient() (*elasticsearch.Client, error) {
 	return elasticsearch.NewClient(cfg)
 }
 
-// indexRepositoryToElasticsearch indexes the repository data into Elasticsearch.
+// generateEmbeddings makes a request to the local embeddings service to generate embeddings for a given input text.
+func generateEmbeddings(text string) ([]float64, error) {
+	url := "http://localhost:32184/embeddings"
+
+	// Create the embeddings request payload
+	payload := EmbeddingRequest{
+		Input:          []string{text},
+		Model:          "nomic-embed-text-v1.5",
+		EncodingFormat: "json",
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling request payload: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error making request to embeddings service: %v", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(res.Body)
+		return nil, fmt.Errorf("error response from embeddings service: %s", body)
+	}
+
+	// Parse the response from the embeddings service
+	var embeddingResponse EmbeddingResponse
+	if err := json.NewDecoder(res.Body).Decode(&embeddingResponse); err != nil {
+		return nil, fmt.Errorf("error decoding response: %v", err)
+	}
+
+	// Extract the embeddings from the response
+	if len(embeddingResponse.Data) == 0 {
+		return nil, fmt.Errorf("no embeddings found in response")
+	}
+
+	vector := embeddingResponse.Data[0].Embedding
+
+	return vector, nil
+}
+
+// indexRepositoryToElasticsearch indexes the repository data into Elasticsearch with embeddings.
 func indexRepositoryToElasticsearch(repoPath string, cfg *coderag.Config, esClient *elasticsearch.Client) error {
 	// Validate the Elasticsearch connection before proceeding
 	res, err := esClient.Info()
@@ -122,7 +219,23 @@ func indexRepositoryToElasticsearch(repoPath string, cfg *coderag.Config, esClie
 
 	// Convert and ingest each function data into Elasticsearch as it's processed
 	for _, function := range index.Functions {
-		docJSON, err := json.Marshal(function)
+		// Generate embeddings for the function's code
+		embedding, err := generateEmbeddings(function.Code)
+		if err != nil {
+			return fmt.Errorf("error generating embeddings: %v", err)
+		}
+
+		// Add embeddings to the function data
+		functionWithEmbedding := FunctionInfo{
+			Name:          function.Name,
+			Comments:      function.Comments,
+			Code:          function.Code,
+			CallsCount:    len(function.Calls),
+			CalledByCount: len(function.CalledBy),
+			Embedding:     embedding,
+		}
+
+		docJSON, err := json.Marshal(functionWithEmbedding)
 		if err != nil {
 			return fmt.Errorf("error marshaling function data: %v", err)
 		}
@@ -146,11 +259,11 @@ func indexRepositoryToElasticsearch(repoPath string, cfg *coderag.Config, esClie
 }
 
 // queryElasticsearchForFunction queries Elasticsearch for function details based on the user's prompt.
-func queryElasticsearchForFunction(prompt string, esClient *elasticsearch.Client) (*coderag.RelationshipInfo, error) {
+func queryElasticsearchForFunction(prompt string, esClient *elasticsearch.Client) (*RelationshipInfo, error) {
 	query := fmt.Sprintf(`{
 		"query": {
 			"match": {
-				"function_name": "%s"
+				"name": "%s"
 			}
 		}
 	}`, prompt)
@@ -172,18 +285,23 @@ func queryElasticsearchForFunction(prompt string, esClient *elasticsearch.Client
 	}
 
 	// Extract the function data from the search results
-	hits := searchResults["hits"].(map[string]interface{})["hits"].([]interface{})
-	if len(hits) == 0 {
+	hits, ok := searchResults["hits"].(map[string]interface{})["hits"].([]interface{})
+	if !ok || len(hits) == 0 {
 		return nil, fmt.Errorf("no function found for query: %s", prompt)
 	}
 
-	source := hits[0].(map[string]interface{})["_source"].(map[string]interface{})
-	functionInfo := coderag.RelationshipInfo{
-		FunctionName:  source["function_name"].(string),
+	source, ok := hits[0].(map[string]interface{})["_source"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid data format in search results")
+	}
+
+	functionInfo := RelationshipInfo{
+		Name:          source["name"].(string),
 		Comments:      source["comments"].(string),
 		Code:          source["code"].(string),
-		TotalCalls:    int(source["total_calls"].(float64)),
-		TotalCalledBy: int(source["total_called_by"].(float64)),
+		CallsCount:    int(source["calls_count"].(float64)),
+		CalledByCount: int(source["called_by_count"].(float64)),
+		// Populate other fields as necessary, e.g., Calls, CalledBy, Summary, etc.
 	}
 
 	return &functionInfo, nil
@@ -214,24 +332,27 @@ func displayRefactoringOpportunitiesFromElasticsearch(esClient *elasticsearch.Cl
 	}
 
 	// Display the refactoring opportunities
-	hits := searchResults["hits"].(map[string]interface{})["hits"].([]interface{})
-	if len(hits) == 0 {
+	hits, ok := searchResults["hits"].(map[string]interface{})["hits"].([]interface{})
+	if !ok || len(hits) == 0 {
 		fmt.Println("No refactoring opportunities found.")
 		return
 	}
 
 	fmt.Println("\nRefactoring Opportunities:")
 	for i, hit := range hits {
-		source := hit.(map[string]interface{})["_source"].(map[string]interface{})
+		source, ok := hit.(map[string]interface{})["_source"].(map[string]interface{})
+		if !ok {
+			continue
+		}
 		fmt.Printf("%d. %s\n   Location: %s\n   Severity: %s\n\n", i+1, source["description"], source["location"], source["severity"])
 	}
 }
 
 // displayRelationshipInfo displays detailed information about a function or method.
-func displayRelationshipInfo(info *coderag.RelationshipInfo) {
-	fmt.Printf("\nFunction: %s\n", info.FunctionName)
-	fmt.Printf("Total Calls: %d\n", info.TotalCalls)
-	fmt.Printf("Total Called By: %d\n", info.TotalCalledBy)
+func displayRelationshipInfo(info *RelationshipInfo) {
+	fmt.Printf("\nFunction: %s\n", info.Name)
+	fmt.Printf("Total Calls: %d\n", info.CallsCount)
+	fmt.Printf("Total Called By: %d\n", info.CalledByCount)
 
 	// Display function comments if available
 	if info.Comments != "" {
@@ -251,7 +372,7 @@ func displayRelationshipInfo(info *coderag.RelationshipInfo) {
 	fmt.Printf("\nSource Code:\n%s\n", info.Code)
 
 	// Display the functions this function calls
-	fmt.Printf("\nFunctions Called by %s:\n", info.FunctionName)
+	fmt.Printf("\nFunctions Called by %s:\n", info.Name)
 	if len(info.Calls) > 0 {
 		for i, calledFunc := range info.Calls {
 			fmt.Printf("  %d. %s (File: %s)\n", i+1, calledFunc, info.CallsFilePaths[i])
@@ -261,7 +382,7 @@ func displayRelationshipInfo(info *coderag.RelationshipInfo) {
 	}
 
 	// Display the functions that call this function
-	fmt.Printf("\nFunctions Calling %s:\n", info.FunctionName)
+	fmt.Printf("\nFunctions Calling %s:\n", info.Name)
 	if len(info.CalledBy) > 0 {
 		for i, callerFunc := range info.CalledBy {
 			fmt.Printf("  %d. %s (File: %s)\n", i+1, callerFunc, info.CalledByFilePaths[i])
