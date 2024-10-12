@@ -1,4 +1,4 @@
-// main.go
+// manifold/main.go
 
 package main
 
@@ -47,17 +47,33 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Initialize the rest of your application (models, services, etc.)
-	mm := NewModelManager(config.DataPath)
-	modelPaths, err := mm.ScanModels()
+	// Get the list of models from the database
+	models, err := db.GetModels()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Failed to load models:", err)
 	}
 
-	log.Println("Found models:")
-	for _, modelPath := range modelPaths {
-		log.Println(modelPath)
+	config.LanguageModels = models
+
+	// Load the selected model from the database
+	selectedModels, err := GetSelectedModels(db.db)
+	if err != nil {
+		log.Fatal("Failed to load selected model:", err)
 	}
+
+	config.SelectedModels = selectedModels
+
+	// Initialize the rest of your application (models, services, etc.)
+	// mm := NewModelManager(config.DataPath)
+	// modelPaths, err := mm.ScanModels()
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+
+	// log.Println("Found models:")
+	// for _, modelPath := range modelPaths {
+	// 	log.Println(modelPath)
+	// }
 
 	// Initialize Echo instance
 	e := echo.New()

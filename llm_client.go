@@ -10,6 +10,7 @@ import (
 type LLMClient interface {
 	SendCompletionRequest(payload *CompletionRequest) (*http.Response, error)
 	SendEmbeddingRequest(payload *EmbeddingRequest) (*http.Response, error)
+	SetModel(model string)
 }
 
 type Client struct {
@@ -21,6 +22,10 @@ type Client struct {
 
 func NewLocalLLMClient(baseURL string, model string, apiKey string) LLMClient {
 	return &Client{BaseURL: baseURL, Model: model, APIKey: apiKey}
+}
+
+func (client *Client) SetModel(model string) {
+	client.Model = model
 }
 
 func (client *Client) SendEmbeddingRequest(payload *EmbeddingRequest) (*http.Response, error) {

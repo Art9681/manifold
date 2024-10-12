@@ -259,10 +259,12 @@ func loadCompletionsRolesToDB(db *SQLiteDB, roles []CompletionsRole) error {
 }
 
 func AddSelectedModel(db *gorm.DB, modelName string) error {
+	// Clear any previously selected models
 	if err := db.Exec("DELETE FROM selected_models").Error; err != nil {
 		return err
 	}
 
+	// Insert the new selected model
 	selectedModel := SelectedModels{
 		ModelName: modelName,
 	}
@@ -270,16 +272,16 @@ func AddSelectedModel(db *gorm.DB, modelName string) error {
 	return db.Create(&selectedModel).Error
 }
 
-func RemoveSelectedModel(db *gorm.DB, modelName string) error {
-	return db.Where("modelName = ?", modelName).Delete(&SelectedModels{}).Error
-}
-
-func GetSelectedModels(db *gorm.DB) ([]SelectedModels, error) {
-	var selectedModels []SelectedModels
-	if err := db.Find(&selectedModels).Error; err != nil {
-		return nil, err
+func GetSelectedModels(db *gorm.DB) (SelectedModels, error) {
+	var selectedModels SelectedModels
+	if err := db.First(&selectedModels).Error; err != nil {
+		return selectedModels, err
 	}
 	return selectedModels, nil
+}
+
+func RemoveSelectedModel(db *gorm.DB, modelName string) error {
+	return db.Where("modelName = ?", modelName).Delete(&SelectedModels{}).Error
 }
 
 func CreateChat(db *gorm.DB, prompt, response, model string) (Chat, error) {
@@ -721,4 +723,21 @@ func (sqldb *SQLiteDB) SyncModels(models []LanguageModel) error {
 	}
 
 	return nil
+}
+
+func GetModelsByBackend(db *gorm.DB, backend string) ([]LanguageModel, error) {
+	var models []LanguageModel
+	err := db.Where("model_type = ?", backend).Find(&models).Error
+	if err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+func (sqldb *SQLiteDB) GetModels() ([]LanguageModel, error) {
+	var models []LanguageModel
+	if err := sqldb.db.Find(&models).Error; err != nil {
+		return nil, err
+	}
+	return models, nil
 }

@@ -1,4 +1,5 @@
-// Package main provides the initialization and setup functions for the application.
+// manifold/init.go
+
 package main
 
 import (
@@ -101,7 +102,8 @@ func initializeDatabase(config *Config) (*SQLiteDB, error) {
 			&ToolMetadata{},
 			&ToolParam{},
 			&CompletionsRole{},
-			&LanguageModel{}, // Unified Model struct
+			&LanguageModel{},
+			&SelectedModels{},
 			&URLTracking{},
 		)
 		if err != nil {
@@ -121,6 +123,8 @@ func initializeDatabase(config *Config) (*SQLiteDB, error) {
 
 		// Combine all models
 		allModels := append(ggufModels, mlxModels...)
+
+		config.LanguageModels = allModels
 
 		// Synchronize models with the database
 		if err := db.SyncModels(allModels); err != nil {

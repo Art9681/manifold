@@ -1,4 +1,4 @@
-// routes.go
+// manifold/routes.go
 
 package main
 
@@ -39,6 +39,22 @@ func setupRoutes(e *echo.Echo, config *Config) {
 	e.POST("/v1/chat/submit", handleChatSubmit)
 	e.POST("/v1/chat/role/:role", func(c echo.Context) error {
 		return handleSetChatRole(c, config)
+	})
+
+	// model routes
+	e.POST("/v1/models/select", func(c echo.Context) error {
+		modelName := c.FormValue("modelName")
+		if modelName == "" {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Model name is required"})
+		}
+
+		err := AddSelectedModel(db.db, modelName)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to set selected model"})
+		}
+
+		// Return json object with status and model name
+		return c.JSON(http.StatusOK, map[string]string{"status": "success", "model": modelName})
 	})
 
 	// Tool routes
