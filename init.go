@@ -86,7 +86,7 @@ func initializeDatabase(dataPath string) (*SQLiteDB, error) {
 
 	if !dbExists {
 		err = db.AutoMigrate(
-			&ModelParams{},
+			&LanguageModels{},
 			&ImageModel{},
 			&SelectedModels{},
 			&Chat{},

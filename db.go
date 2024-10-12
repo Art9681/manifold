@@ -64,18 +64,24 @@ type GPU struct {
 	MetalSupport       string `json:"metal_support"`
 }
 
-type ModelParams struct {
+type LanguageModels struct {
 	ID                int64   `json:"id"`
 	Name              string  `json:"name"`
-	Homepage          string  `json:"homepage"`
-	Downloads         string  `json:"downloads"` // Changed from []string to string
+	Path              string  `json:"path"`
 	Temperature       float64 `json:"temperature"`
 	TopP              float64 `json:"top_p"`
 	TopK              int     `json:"top_k"`
 	RepetitionPenalty float64 `json:"repetition_penalty"`
-	Prompt            string  `json:"prompt"`
 	Ctx               int     `json:"ctx"`
-	Downloaded        bool    `json:"downloaded"`
+	ModelID           int64   `json:"model_id"` // Foreign key reference
+}
+
+type GGUFModel struct {
+	LanguageModels
+}
+
+type MLXModel struct {
+	LanguageModels
 }
 
 type ImageModel struct {
@@ -120,6 +126,14 @@ type ToolParam struct {
 	ParamValue string
 }
 
+func (GGUFModel) TableName() string {
+	return "gguf_models"
+}
+
+func (MLXModel) TableName() string {
+	return "mlx_models"
+}
+
 // NewSQLiteDB initializes a new SQLiteDB with detailed logging.
 func NewSQLiteDB(dataPath string) (*SQLiteDB, error) {
 	dbPath := filepath.Join(dataPath, "eternaldata.db") // Ensure consistency here
@@ -133,10 +147,10 @@ func NewSQLiteDB(dataPath string) (*SQLiteDB, error) {
 	newLogger := logger.New(
 		log.New(os.Stdout, "\r\n", log.LstdFlags),
 		logger.Config{
-			SlowThreshold:             time.Second, // Slow SQL threshold
-			LogLevel:                  logger.Info, // Log level (Info for detailed logs)
-			IgnoreRecordNotFoundError: true,        // Ignore ErrRecordNotFound error for logger
-			Colorful:                  true,        // Enable color
+			SlowThreshold:             time.Second,  // Slow SQL threshold
+			LogLevel:                  logger.Error, // Log level (Info for detailed logs)
+			IgnoreRecordNotFoundError: true,         // Ignore ErrRecordNotFound error for logger
+			Colorful:                  true,         // Enable color
 		},
 	)
 
@@ -207,8 +221,8 @@ func (sqldb *SQLiteDB) UpdateByName(name string, updatedRecord interface{}) erro
 	return sqldb.db.Model(updatedRecord).Where("name = ?", name).Updates(updatedRecord).Error
 }
 
-func (sqldb *SQLiteDB) UpdateDownloadedByName(name string, downloaded bool) (*ModelParams, error) {
-	var model ModelParams
+func (sqldb *SQLiteDB) UpdateDownloadedByName(name string, downloaded bool) (*LanguageModels, error) {
+	var model LanguageModels
 	if err := sqldb.db.Model(&model).Where("name = ?", name).Update("downloaded", downloaded).Error; err != nil {
 		return nil, err
 	}
@@ -243,9 +257,9 @@ func loadCompletionsRolesToDB(db *SQLiteDB, roles []CompletionsRole) error {
 	return nil
 }
 
-func loadModelDataToDB(db *SQLiteDB, models []ModelParams) error {
+func loadModelDataToDB(db *SQLiteDB, models []LanguageModels) error {
 	for _, model := range models {
-		var existingModel ModelParams
+		var existingModel LanguageModels
 		err := db.First(model.Name, &existingModel)
 
 		if err != nil {
@@ -257,7 +271,7 @@ func loadModelDataToDB(db *SQLiteDB, models []ModelParams) error {
 				return err
 			}
 		} else {
-			if !areModelParamsEqual(existingModel, model) {
+			if !areLanguageModelsEqual(existingModel, model) {
 				if err := db.UpdateByName(model.Name, &model); err != nil {
 					return err
 				}
@@ -270,11 +284,8 @@ func loadModelDataToDB(db *SQLiteDB, models []ModelParams) error {
 	return nil
 }
 
-func areModelParamsEqual(a, b ModelParams) bool {
+func areLanguageModelsEqual(a, b LanguageModels) bool {
 	if a.Name != b.Name {
-		return false
-	}
-	if a.Homepage != b.Homepage {
 		return false
 	}
 	if a.Temperature != b.Temperature {
@@ -289,16 +300,7 @@ func areModelParamsEqual(a, b ModelParams) bool {
 	if a.RepetitionPenalty != b.RepetitionPenalty {
 		return false
 	}
-	if a.Prompt != b.Prompt {
-		return false
-	}
 	if a.Ctx != b.Ctx {
-		return false
-	}
-	if a.Downloads != b.Downloads {
-		return false
-	}
-	if a.Downloaded != b.Downloaded {
 		return false
 	}
 
@@ -406,33 +408,6 @@ func (sqldb *SQLiteDB) ListURLTrackings() ([]URLTracking, error) {
 
 func (sqldb *SQLiteDB) DeleteURLTracking(url string) error {
 	return sqldb.db.Where("url = ?", url).Delete(&URLTracking{}).Error
-}
-
-func checkDownloadedModels(db *SQLiteDB, config *Config) (*Config, error) {
-	for i := range config.LanguageModels {
-		model := &config.LanguageModels[i]
-
-		modelPath := filepath.Join(config.DataPath, "models", model.Name)
-		if _, err := os.Stat(modelPath); err == nil {
-			modelParams, err := db.UpdateDownloadedByName(model.Name, true)
-			if err != nil {
-				return nil, fmt.Errorf("failed to update downloaded state for model %s: %w", model.Name, err)
-			}
-
-			model.Name = modelParams.Name
-			model.Homepage = modelParams.Homepage
-			model.Downloads = modelParams.Downloads
-			model.Temperature = modelParams.Temperature
-			model.TopP = modelParams.TopP
-			model.TopK = modelParams.TopK
-			model.RepetitionPenalty = modelParams.RepetitionPenalty
-			model.Prompt = modelParams.Prompt
-			model.Ctx = modelParams.Ctx
-			model.Downloaded = modelParams.Downloaded
-		}
-	}
-
-	return config, nil
 }
 
 // CreateToolMetadata adds a new tool to the database

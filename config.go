@@ -25,13 +25,12 @@ type ToolConfig struct {
 }
 
 type Config struct {
-	OpenAIAPIKey   string            `yaml:"openai_api_key,omitempty"`
-	DataPath       string            `yaml:"data_path,omitempty"`
-	LLMBackend     string            `yaml:"llm_backend"`
-	Services       []ServiceConfig   `yaml:"services"`
-	Tools          []ToolConfig      `yaml:"tools"`
-	LanguageModels []ModelParams     `yaml:"language_models"`
-	Roles          []CompletionsRole `yaml:"roles"`
+	OpenAIAPIKey string            `yaml:"openai_api_key,omitempty"`
+	DataPath     string            `yaml:"data_path"`
+	LLMBackend   string            `yaml:"llm_backend"`
+	Services     []ServiceConfig   `yaml:"services"`
+	Tools        []ToolConfig      `yaml:"tools"`
+	Roles        []CompletionsRole `yaml:"roles"`
 }
 
 func LoadConfig(filename string) (*Config, error) {
@@ -97,7 +96,7 @@ func (c *Config) GetMLXServiceConfig() (*ServiceConfig, error) {
 // handleGetConfig is a handler for getting the configuration
 // func handleGetConfig(c echo.Context, config *Config, db *SQLiteDB) error {
 // 	// Retrieve the models from the database
-// 	models := []ModelParams{}
+// 	models := []LanguageModels{}
 // 	if err := db.Find(&models).Error; err != nil {
 // 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve models from the database"})
 // 	}

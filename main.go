@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,22 +41,20 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Get the home folder path
-	home, err := os.UserHomeDir()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Set the data path
-	config.DataPath = home + "/.manifold"
-
 	// Initialize the application
 	db, err = initializeApplication(config)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = db.AutoMigrate(&ToolMetadata{}, &ToolParam{}, &CompletionsRole{}, &ModelParams{}, &URLTracking{})
+	err = db.AutoMigrate(
+		&ToolMetadata{},
+		&ToolParam{},
+		&CompletionsRole{},
+		&GGUFModel{},
+		&MLXModel{},
+		&URLTracking{},
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -70,13 +69,77 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Load model parameters into the database
-	if err := loadModelDataToDB(db, config.LanguageModels); err != nil {
+	// config, err = checkDownloadedModels(db, config)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+
+	mm := NewModelManager(config.DataPath)
+	modelPaths, err := mm.ScanModels()
+	if err != nil {
 		log.Fatal(err)
 	}
 
-	config, err = checkDownloadedModels(db, config)
-	if err != nil {
+	log.Println("Found models:")
+	for _, modelPath := range modelPaths {
+		log.Println(modelPath)
+	}
+
+	// Filter out the GGUF models if the path contains models-gguf
+	ggufModels := []string{}
+	for _, model := range modelPaths {
+		if strings.Contains(model, "models-gguf") {
+			ggufModels = append(ggufModels, model)
+		}
+	}
+
+	// Load GGUF Models with default parameters to db
+	ggufModelParams := []LanguageModels{}
+	for _, model := range ggufModels {
+		// Extract the name between the last slash and file extension
+		name := model[strings.LastIndex(model, "/")+1:]
+
+		ggufModelParams = append(ggufModelParams, LanguageModels{
+			Name:              name,
+			Path:              model,
+			Temperature:       0.5,
+			TopP:              0.9,
+			TopK:              50,
+			RepetitionPenalty: 1.1,
+			Ctx:               4096,
+		})
+	}
+
+	if err := loadModelDataToDB(db, ggufModelParams); err != nil {
+		log.Fatal(err)
+	}
+
+	// Filter out the MLX models if the path contains models-mlx
+	mlxModels := []string{}
+	for _, model := range modelPaths {
+		if strings.Contains(model, "models-mlx") {
+			mlxModels = append(mlxModels, model)
+		}
+	}
+
+	// Load MLX Models with default parameters to db
+	mlxModelParams := []LanguageModels{}
+	for _, model := range mlxModels {
+		// Extract the name between the last slash and file extension
+		name := model[strings.LastIndex(model, "/")+1:]
+
+		mlxModelParams = append(mlxModelParams, LanguageModels{
+			Name:              name,
+			Path:              model,
+			Temperature:       0.5,
+			TopP:              0.9,
+			TopK:              50,
+			RepetitionPenalty: 1.1,
+			Ctx:               4096,
+		})
+	}
+
+	if err := loadModelDataToDB(db, mlxModelParams); err != nil {
 		log.Fatal(err)
 	}
 

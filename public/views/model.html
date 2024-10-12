@@ -96,7 +96,7 @@
               <label for="repeat-penalty-slider" class="form-label">Repetition Penalty: <span id="repeat-penalty-value">${modelData.RepetitionPenalty}</span></label>
               <input type="range" class="form-range custom-range" min="0.0" max="50.0" step="0.1" value="${modelData.RepetitionPenalty}" id="repeat-penalty-slider">
             </div>
-            <button id="saveModelParamsBtn" class="btn btn-secondary btn-block bg-gradient mt-3 w-100">Save</button>
+            <button id="saveLanguageModelsBtn" class="btn btn-secondary btn-block bg-gradient mt-3 w-100">Save</button>
           `;
 
           // Add event listeners to update the displayed value as the slider is moved
@@ -107,7 +107,7 @@
           });
 
           // Add event listener to save the model parameters
-          //document.getElementById('saveModelParamsBtn').addEventListener('click', saveModelParams);
+          //document.getElementById('saveLanguageModelsBtn').addEventListener('click', saveLanguageModels);
         }
       } else {
         console.error('Error fetching model data');
@@ -116,73 +116,6 @@
       console.error('Error fetching model data:', error);
     }
   }
-
-  // async function saveModelParams() {
-  //   try {
-  //     const modelName = document.getElementById('model-select').value;
-  //     const ctxSize = parseInt(document.getElementById('ctx-size-slider').value);
-  //     const temp = parseFloat(document.getElementById('temp-slider').value);
-  //     const top_p = parseFloat(document.getElementById('topp-slider').value);
-  //     const top_k = parseInt(document.getElementById('topk-slider').value);
-  //     const repeat_penalty = parseFloat(document.getElementById('repeat-penalty-slider').value);
-
-  //     const modelParams = {
-  //       Name: modelName,
-  //       Options: {
-  //         ctx_size: ctxSize,
-  //         temp: temp,
-  //         top_p: top_p,
-  //         top_k: top_k,
-  //         repeat_penalty: repeat_penalty,
-  //       },
-  //     };
-
-  //     const response = await fetch('/v1/models/set', {
-  //       method: 'POST',
-  //       headers: {
-  //         'Content-Type': 'application/json'
-  //       },
-  //       body: JSON.stringify(modelParams),
-  //     });
-
-  //     if (response.ok) {
-  //       console.log('Settings saved successfully');
-  //       // You can add a visual feedback here, like a toast notification
-  //     } else {
-  //       console.error('Error saving settings');
-  //     }
-  //   } catch (error) {
-  //     console.error('Error sending request:', error);
-  //   }
-  // }
-
-  // function downloadModel(modelName) {
-  //   const progressContainer = document.getElementById('progress-download');
-  //   const downloadButton = document.getElementById('model-download-btn');
-
-  //   downloadButton.classList.add('d-none');
-  //   progressContainer.classList.remove('d-none');
-
-  //   console.log("Downloading model: ", modelName);
-
-  //   fetch(`/v1/models/download?model=${modelName}`, {
-  //     method: 'POST',
-  //     headers: {
-  //       'Content-Type': 'application/json',
-  //     },
-  //     body: JSON.stringify({ modelName }),
-  //   })
-  //     .then(response => {
-  //       if (!response.ok) {
-  //         throw new Error('Failed to download model');
-  //       }
-  //     })
-  //     .catch(error => {
-  //       console.error('Error:', error);
-  //       downloadButton.classList.remove('d-none');
-  //       progressContainer.classList.add('d-none');
-  //     });
-  // }
 
   function setRole(role) {
     const selectedRole = role;
