@@ -22,7 +22,7 @@ var embedFS embed.FS
 func initializeApplication(config *Config) (*SQLiteDB, error) {
 	createDataDirectory(config.DataPath)
 	initializeServer(config.DataPath)
-	db, err := initializeDatabase(config.DataPath)
+	db, err := initializeDatabase(config)
 	if err != nil {
 		return nil, err
 	}
@@ -75,25 +75,66 @@ func initializeServer(dataPath string) error {
 }
 
 // initializeDatabase initializes the SQLite database and performs auto-migration.
-func initializeDatabase(dataPath string) (*SQLiteDB, error) {
-	dbPath := filepath.Join(dataPath, "eternaldata.db") // Changed from "database.sqlite" to "eternaldata.db"
+func initializeDatabase(config *Config) (*SQLiteDB, error) {
+	dbPath := filepath.Join(config.DataPath, "eternaldata.db") // Changed from "database.sqlite" to "eternaldata.db"
 	dbExists := fileExists(dbPath)
 
-	db, err := NewSQLiteDB(dataPath)
+	db, err := NewSQLiteDB(config.DataPath)
 	if err != nil {
 		return nil, err
 	}
 
+	// Enable SQLite extension loading if necessary
+	if err := db.EnableSQLiteExtensionLoading(); err != nil {
+		log.Fatalf("Failed to enable SQLite extensions: %v", err)
+	}
+
+	// Load and execute the sqlite-vec extension if needed
+	// if err := db.LoadVecExtension(); err != nil {
+	// 	log.Fatalf("Failed to load sqlite-vec extension: %v", err)
+	// }
+
 	if !dbExists {
+		// Perform AutoMigrate for all relevant models
 		err = db.AutoMigrate(
-			&LanguageModels{},
-			&ImageModel{},
-			&SelectedModels{},
 			&Chat{},
+			&ToolMetadata{},
+			&ToolParam{},
+			&CompletionsRole{},
+			&LanguageModel{}, // Unified Model struct
 			&URLTracking{},
 		)
 		if err != nil {
-			return nil, err
+			log.Fatal(err)
+		}
+
+		// Scan models directories
+		ggufModels, err := ScanGGUFModels(config.DataPath)
+		if err != nil {
+			log.Fatalf("Failed to scan gguf models: %v", err)
+		}
+
+		mlxModels, err := ScanMLXModels(config.DataPath)
+		if err != nil {
+			log.Fatalf("Failed to scan mlx models: %v", err)
+		}
+
+		// Combine all models
+		allModels := append(ggufModels, mlxModels...)
+
+		// Synchronize models with the database
+		if err := db.SyncModels(allModels); err != nil {
+			log.Fatalf("Failed to synchronize models: %v", err)
+		}
+
+		// Load tools data into the database
+		if err := loadToolsToDB(db, config.Tools); err != nil {
+			log.Fatal(err)
+		}
+
+		// Load completions roles into the database
+		if err := loadCompletionsRolesToDB(db, config.Roles); err != nil {
+			log.Fatal(err)
 		}
 
 		// Create FTS5 table for full-text search on 'Prompt' and 'Response'

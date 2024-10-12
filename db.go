@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math"
 	"os"
@@ -76,12 +77,22 @@ type LanguageModels struct {
 	ModelID           int64   `json:"model_id"` // Foreign key reference
 }
 
-type GGUFModel struct {
-	LanguageModels
+// Model represents a language model, either gguf or mlx.
+type LanguageModel struct {
+	ID                int64   `gorm:"primaryKey" json:"id"`
+	Name              string  `gorm:"uniqueIndex:idx_name_type" json:"name"`       // Model name
+	Path              string  `gorm:"uniqueIndex:idx_name_type" json:"path"`       // Full path to the model file
+	ModelType         string  `gorm:"uniqueIndex:idx_name_type" json:"model_type"` // "gguf" or "mlx"
+	Temperature       float64 `json:"temperature"`
+	TopP              float64 `json:"top_p"`
+	TopK              int     `json:"top_k"`
+	RepetitionPenalty float64 `json:"repetition_penalty"`
+	Ctx               int     `json:"ctx"`
 }
 
-type MLXModel struct {
-	LanguageModels
+// TableName sets the table name for GORM.
+func (Model) TableName() string {
+	return "models"
 }
 
 type ImageModel struct {
@@ -126,14 +137,6 @@ type ToolParam struct {
 	ParamValue string
 }
 
-func (GGUFModel) TableName() string {
-	return "gguf_models"
-}
-
-func (MLXModel) TableName() string {
-	return "mlx_models"
-}
-
 // NewSQLiteDB initializes a new SQLiteDB with detailed logging.
 func NewSQLiteDB(dataPath string) (*SQLiteDB, error) {
 	dbPath := filepath.Join(dataPath, "eternaldata.db") // Ensure consistency here
@@ -166,17 +169,15 @@ func NewSQLiteDB(dataPath string) (*SQLiteDB, error) {
 
 // Enable SQLite extension loading
 func (sqldb *SQLiteDB) EnableSQLiteExtensionLoading() error {
-	// Enable extension loading via SQLite PRAGMA
 	db := sqldb.db
 
-	err := db.Exec("PRAGMA foreign_keys = ON;")
-	if err != nil {
+	// Enable foreign keys
+	if err := db.Exec("PRAGMA foreign_keys = ON;").Error; err != nil {
 		return fmt.Errorf("could not enable foreign keys: %w", err)
 	}
 
-	// Enable extension loading (important for loading sqlite-vec)
-	err = sqldb.db.Exec("PRAGMA load_extension = 1;")
-	if err != nil {
+	// Optionally enable extension loading, if needed
+	if err := db.Exec("PRAGMA load_extension = 1;").Error; err != nil {
 		return fmt.Errorf("could not enable extension loading: %w", err)
 	}
 
@@ -188,8 +189,8 @@ func (sqldb *SQLiteDB) LoadVecExtension() error {
 	// Load the sqlite-vec extension
 	db := sqldb.db
 
-	err := db.Exec("SELECT load_extension('libsqlitevec.dylib', 'sqlite3_vec_init');")
-	if err != nil {
+	// Use Exec().Error to get the error result
+	if err := db.Exec("SELECT load_extension('libsqlitevec.dylib', 'sqlite3_vec_init');").Error; err != nil {
 		return fmt.Errorf("could not load sqlite-vec extension: %w", err)
 	}
 
@@ -253,79 +254,6 @@ func loadCompletionsRolesToDB(db *SQLiteDB, roles []CompletionsRole) error {
 	}
 
 	log.Println("Completions roles data loaded to database")
-
-	return nil
-}
-
-func loadModelDataToDB(db *SQLiteDB, models []LanguageModels) error {
-	for _, model := range models {
-		var existingModel LanguageModels
-		err := db.First(model.Name, &existingModel)
-
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				if err := db.Create(&model); err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
-		} else {
-			if !areLanguageModelsEqual(existingModel, model) {
-				if err := db.UpdateByName(model.Name, &model); err != nil {
-					return err
-				}
-			}
-		}
-	}
-
-	log.Println("Model data loaded to database")
-
-	return nil
-}
-
-func areLanguageModelsEqual(a, b LanguageModels) bool {
-	if a.Name != b.Name {
-		return false
-	}
-	if a.Temperature != b.Temperature {
-		return false
-	}
-	if a.TopP != b.TopP {
-		return false
-	}
-	if a.TopK != b.TopK {
-		return false
-	}
-	if a.RepetitionPenalty != b.RepetitionPenalty {
-		return false
-	}
-	if a.Ctx != b.Ctx {
-		return false
-	}
-
-	return true
-}
-
-func LoadImageModelDataToDB(db *SQLiteDB, models []ImageModel) error {
-	for _, model := range models {
-		var existingModel ImageModel
-		err := db.First(model.Name, &existingModel)
-
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				if err := db.Create(&model); err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
-		} else {
-			if err := db.UpdateByName(model.Name, &model); err != nil {
-				return err
-			}
-		}
-	}
 
 	return nil
 }
@@ -420,12 +348,24 @@ func (sqldb *SQLiteDB) CreateToolMetadata(tool ToolMetadata) error {
 
 // CreateToolParam adds a parameter to a tool
 func (sqldb *SQLiteDB) CreateToolParam(toolID uint, paramName, paramValue string) error {
+	// Ensure that the tool exists with the given toolID
+	var tool ToolMetadata
+	if err := sqldb.db.First(&tool, toolID).Error; err != nil {
+		return fmt.Errorf("tool with ID %d not found: %w", toolID, err)
+	}
+
 	toolParam := ToolParam{
 		ToolID:     toolID,
 		ParamName:  paramName,
 		ParamValue: paramValue,
 	}
-	return sqldb.db.Create(&toolParam).Error
+
+	// Insert the tool param
+	if err := sqldb.db.Create(&toolParam).Error; err != nil {
+		return fmt.Errorf("failed to create tool parameter: %w", err)
+	}
+
+	return nil
 }
 
 // GetToolMetadataByName retrieves a tool's metadata by its name.
@@ -460,37 +400,25 @@ func loadToolsToDB(db *SQLiteDB, tools []ToolConfig) error {
 	for _, toolConfig := range tools {
 		var existingTool ToolMetadata
 		err := db.db.Preload("Params").Where("name = ?", toolConfig.Name).First(&existingTool).Error
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				toolMetadata := ToolMetadata{Name: toolConfig.Name, Enabled: toolConfig.Parameters["enabled"].(bool)}
-				if err := db.CreateToolMetadata(toolMetadata); err != nil {
-					return err
-				}
-			} else {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			toolMetadata := ToolMetadata{Name: toolConfig.Name, Enabled: toolConfig.Parameters["enabled"].(bool)}
+			if err := db.CreateToolMetadata(toolMetadata); err != nil {
 				return err
 			}
-		} else {
-			err = db.UpdateToolMetadataByName(toolConfig.Name, toolConfig.Parameters["enabled"].(bool))
+
+			// Make sure toolMetadata has the new tool ID
+			err = db.db.Where("name = ?", toolConfig.Name).First(&existingTool).Error
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to retrieve newly created tool: %v", err)
 			}
+		} else if err != nil {
+			return err
 		}
 
+		// Insert or update tool parameters
 		for paramName, paramValue := range toolConfig.Parameters {
-			var existingParam ToolParam
-			err := db.db.Where("tool_id = ? AND param_name = ?", existingTool.ID, paramName).First(&existingParam).Error
-			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					if err := db.CreateToolParam(existingTool.ID, paramName, fmt.Sprintf("%v", paramValue)); err != nil {
-						return err
-					}
-				} else {
-					return err
-				}
-			} else {
-				if err := db.UpdateToolParam(existingTool.ID, paramName, fmt.Sprintf("%v", paramValue)); err != nil {
-					return err
-				}
+			if err := db.CreateToolParam(existingTool.ID, paramName, fmt.Sprintf("%v", paramValue)); err != nil {
+				return err
 			}
 		}
 	}
@@ -661,4 +589,136 @@ func blobToEmbedding(blob []byte) []float64 {
 		embedding[i] = math.Float64frombits(binary.LittleEndian.Uint64(blob[i*8:]))
 	}
 	return embedding
+}
+
+// ScanGGUFModels scans the "models-gguf" directory and returns a list of models.
+func ScanGGUFModels(modelsDir string) ([]LanguageModel, error) {
+	var ggufModels []LanguageModel
+
+	ggufPath := filepath.Join(modelsDir, "models-gguf")
+	entries, err := os.ReadDir(ggufPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read models-gguf directory: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			modelName := entry.Name()
+			modelDir := filepath.Join(ggufPath, modelName)
+
+			files, err := ioutil.ReadDir(modelDir)
+			if err != nil {
+				log.Printf("Failed to read directory %s: %v", modelDir, err)
+				continue
+			}
+
+			for _, file := range files {
+				if !file.IsDir() && strings.HasSuffix(file.Name(), ".gguf") {
+					fullPath := filepath.Join(modelDir, file.Name())
+					ggufModels = append(ggufModels, LanguageModel{
+						Name:              modelName,
+						Path:              fullPath,
+						ModelType:         "gguf",
+						Temperature:       0.5,
+						TopP:              0.9,
+						TopK:              50,
+						RepetitionPenalty: 1.1,
+						Ctx:               4096,
+					})
+					break // Only first gguf file per model
+				}
+			}
+		}
+	}
+
+	return ggufModels, nil
+}
+
+// ScanMLXModels scans the "models-mlx" directory and returns a list of models.
+func ScanMLXModels(modelsDir string) ([]LanguageModel, error) {
+	var mlxModels []LanguageModel
+
+	mlxPath := filepath.Join(modelsDir, "models-mlx")
+	entries, err := os.ReadDir(mlxPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read models-mlx directory: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			modelName := entry.Name()
+			modelDir := filepath.Join(mlxPath, modelName)
+
+			files, err := os.ReadDir(modelDir)
+			if err != nil {
+				log.Printf("Failed to read directory %s: %v", modelDir, err)
+				continue
+			}
+
+			var safetensorsPath string
+			for _, file := range files {
+				if !file.IsDir() && strings.HasSuffix(file.Name(), ".safetensors") {
+					fullPath := filepath.Join(modelDir, file.Name())
+					safetensorsPath = fullPath
+					break // Only first safetensors file per model
+				}
+			}
+
+			if safetensorsPath != "" {
+				mlxModels = append(mlxModels, LanguageModel{
+					Name:              modelName,
+					Path:              safetensorsPath,
+					ModelType:         "mlx",
+					Temperature:       0.5,
+					TopP:              0.9,
+					TopK:              50,
+					RepetitionPenalty: 1.1,
+					Ctx:               4096,
+				})
+			}
+		}
+	}
+
+	return mlxModels, nil
+}
+
+// SyncModels synchronizes the models in the filesystem with the database.
+func (sqldb *SQLiteDB) SyncModels(models []LanguageModel) error {
+	for _, model := range models {
+		var existing LanguageModel
+		err := sqldb.db.Where("name = ? AND model_type = ?", model.Name, model.ModelType).First(&existing).Error
+
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Insert new model
+			if err := sqldb.db.Create(&model).Error; err != nil {
+				log.Printf("Failed to insert model %s (%s): %v", model.Name, model.ModelType, err)
+				continue
+			}
+			log.Printf("Inserted new model: %s (%s)", model.Name, model.ModelType)
+		} else if err != nil {
+			log.Printf("Error querying model %s (%s): %v", model.Name, model.ModelType, err)
+			continue
+		} else {
+			// Model already exists, optionally update fields if needed
+			// For now, do nothing
+		}
+	}
+
+	// Remove models from DB that no longer exist in the filesystem
+	var dbModels []LanguageModel
+	if err := sqldb.db.Find(&dbModels).Error; err != nil {
+		return fmt.Errorf("failed to retrieve models from DB: %v", err)
+	}
+
+	for _, dbModel := range dbModels {
+		if !fileExists(dbModel.Path) {
+			if err := sqldb.db.Delete(&dbModel).Error; err != nil {
+				log.Printf("Failed to delete model %s (%s): %v", dbModel.Name, dbModel.ModelType, err)
+				continue
+			}
+			log.Printf("Deleted missing model: %s (%s)", dbModel.Name, dbModel.ModelType)
+		}
+	}
+
+	return nil
 }

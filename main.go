@@ -1,4 +1,5 @@
 // main.go
+
 package main
 
 import (
@@ -8,7 +9,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -47,33 +47,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	err = db.AutoMigrate(
-		&ToolMetadata{},
-		&ToolParam{},
-		&CompletionsRole{},
-		&GGUFModel{},
-		&MLXModel{},
-		&URLTracking{},
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Load tools data into the database
-	if err := loadToolsToDB(db, config.Tools); err != nil {
-		log.Fatal(err)
-	}
-
-	// Load completions roles into the database
-	if err := loadCompletionsRolesToDB(db, config.Roles); err != nil {
-		log.Fatal(err)
-	}
-
-	// config, err = checkDownloadedModels(db, config)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
+	// Initialize the rest of your application (models, services, etc.)
 	mm := NewModelManager(config.DataPath)
 	modelPaths, err := mm.ScanModels()
 	if err != nil {
@@ -85,65 +59,7 @@ func main() {
 		log.Println(modelPath)
 	}
 
-	// Filter out the GGUF models if the path contains models-gguf
-	ggufModels := []string{}
-	for _, model := range modelPaths {
-		if strings.Contains(model, "models-gguf") {
-			ggufModels = append(ggufModels, model)
-		}
-	}
-
-	// Load GGUF Models with default parameters to db
-	ggufModelParams := []LanguageModels{}
-	for _, model := range ggufModels {
-		// Extract the name between the last slash and file extension
-		name := model[strings.LastIndex(model, "/")+1:]
-
-		ggufModelParams = append(ggufModelParams, LanguageModels{
-			Name:              name,
-			Path:              model,
-			Temperature:       0.5,
-			TopP:              0.9,
-			TopK:              50,
-			RepetitionPenalty: 1.1,
-			Ctx:               4096,
-		})
-	}
-
-	if err := loadModelDataToDB(db, ggufModelParams); err != nil {
-		log.Fatal(err)
-	}
-
-	// Filter out the MLX models if the path contains models-mlx
-	mlxModels := []string{}
-	for _, model := range modelPaths {
-		if strings.Contains(model, "models-mlx") {
-			mlxModels = append(mlxModels, model)
-		}
-	}
-
-	// Load MLX Models with default parameters to db
-	mlxModelParams := []LanguageModels{}
-	for _, model := range mlxModels {
-		// Extract the name between the last slash and file extension
-		name := model[strings.LastIndex(model, "/")+1:]
-
-		mlxModelParams = append(mlxModelParams, LanguageModels{
-			Name:              name,
-			Path:              model,
-			Temperature:       0.5,
-			TopP:              0.9,
-			TopK:              50,
-			RepetitionPenalty: 1.1,
-			Ctx:               4096,
-		})
-	}
-
-	if err := loadModelDataToDB(db, mlxModelParams); err != nil {
-		log.Fatal(err)
-	}
-
-	// Create a new Echo instance
+	// Initialize Echo instance
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
@@ -254,17 +170,6 @@ func main() {
 			e.Logger.Error(err)
 		}
 	}()
-
-	// Example: Run the workflow with a sample prompt
-	/*
-		samplePrompt := "Please summarize the content from https://example.com."
-		result, err := wm.Run(context.Background(), samplePrompt)
-		if err != nil {
-			log.Println("Workflow Error:", err)
-		} else {
-			fmt.Println("Workflow Result:", result)
-		}
-	*/
 
 	e.Logger.Info(e.Start(fmt.Sprintf(":%d", config.Services[0].Port)))
 }
