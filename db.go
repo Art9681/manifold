@@ -749,3 +749,11 @@ func (sqldb *SQLiteDB) GetModels() ([]LanguageModel, error) {
 	}
 	return models, nil
 }
+
+func (sqldb *SQLiteDB) GetToolsMetadata() ([]ToolMetadata, error) {
+	var tools []ToolMetadata
+	if err := sqldb.db.Preload("Params").Find(&tools).Error; err != nil {
+		return nil, err
+	}
+	return tools, nil
+}

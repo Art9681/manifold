@@ -89,9 +89,44 @@
 </div>
 
 <script>
+  document.addEventListener('DOMContentLoaded', function() {
+    // Fetch tool data from the backend and store in localStorage
+    fetchToolData();
+  });
+
+  // Fetch tool data from the backend
+  function fetchToolData() {
+    fetch('http://192.168.0.110:32180/v1/tools/list')
+      .then(response => response.json())
+      .then(data => {
+        // Store each tool's data in localStorage and set toggle states
+        data.forEach(tool => {
+          localStorage.setItem(tool.Name, tool.Enabled);
+          setToolToggleState(tool.Name, tool.Enabled);
+        });
+      })
+      .catch(error => {
+        console.error('Error fetching tool data:', error);
+        alert('Failed to fetch tool data. Please try again.');
+      });
+  }
+
+  // Set the tool toggle state based on data from localStorage or fetched data
+  function setToolToggleState(toolName, isEnabled) {
+    const switchElement = document.getElementById(`${toolName}-switch`);
+    if (switchElement) {
+      switchElement.checked = isEnabled;
+    }
+  }
+
+  // Toggle tool state and update localStorage
   function toggleTool(toolName, isEnabled) {
     console.log(`Toggling ${toolName} to ${isEnabled ? 'enabled' : 'disabled'}`);
 
+    // Update localStorage
+    localStorage.setItem(toolName, isEnabled);
+
+    // Send the updated state to the backend
     fetch(`/v1/tools/${toolName}/toggle`, {
       method: 'POST',
       headers: {
@@ -109,6 +144,7 @@
     });
   }
 
+  // Toggle the individual tools
   function toggleTeamTool() {
     const isEnabled = document.getElementById('team-switch').checked;
     toggleTool('team', isEnabled);
@@ -120,11 +156,7 @@
   }
 
   function toggleWebGetTool() {
-    console.log('Toggling webget');
     const isEnabled = document.getElementById('webget-switch').checked;
-
-    console.log('isEnabled:', isEnabled);
-
     toggleTool('webget', isEnabled);
   }
 
@@ -133,5 +165,6 @@
     toggleTool('retrieval', isEnabled);
   }
 </script>
-</script>
+
+
 {{end}}

@@ -495,3 +495,15 @@ func handleToolToggle(c echo.Context) error {
 		"message": fmt.Sprintf("Tool '%s' has been %s", toolName, map[bool]string{true: "enabled", false: "disabled"}[requestPayload.Enabled]),
 	})
 }
+
+// HandleGetTools returns the list of tools and their enabled status.
+func handleGetTools(c echo.Context) error {
+	tools, err := db.GetToolsMetadata()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{
+			"error": "Failed to fetch tools metadata",
+		})
+	}
+
+	return c.JSON(http.StatusOK, tools)
+}
