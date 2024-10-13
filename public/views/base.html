@@ -116,7 +116,9 @@
                 <textarea id="message" name="userprompt" class="col form-control shadow-none"
                   placeholder="Type your message..." rows="2" style="outline: none;">write a haiku</textarea>
                 <input type="hidden" name="role_instructions" :value="$store.dataStore.roleInstructions">
-                <input type="hidden" name="model" :value="$store.dataStore.selected_models">
+                
+                <!-- Get model from local storage and submit as hidden input -->
+                <input type="hidden" name="model" :value="$store.dataStore.selectedModel">
                 <!-- Clear textarea after submit -->
 
                 <button id="send" class="btn btn-secondary btn-prompt-send bg-gradient" type="button"

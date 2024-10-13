@@ -309,6 +309,7 @@ func IncrementTurn() int {
 
 // handleChatSubmit handles the submission of chat messages.
 func handleChatSubmit(c echo.Context) error {
+	model := c.FormValue("model")
 	userPrompt := c.FormValue("userprompt")
 	roleInstructions := c.FormValue("role_instructions")
 	endpoint := c.FormValue("endpoint")
@@ -319,10 +320,10 @@ func handleChatSubmit(c echo.Context) error {
 
 	// render map into echo chat.html template
 	return c.Render(http.StatusOK, "chat", echo.Map{
-		"username":  "User",
-		"message":   userPrompt,
-		"assistant": "Assistant",
-		//"model":            "/Users/arturoaquino/.eternal-v1/models/gemma-2-27b-it/gemma-2-27b-it-Q8_0.gguf",
+		"username":         "User",
+		"message":          userPrompt,
+		"assistant":        "Assistant",
+		"model":            model,
 		"turnID":           turnID,
 		"wsRoute":          "",
 		"endpoint":         endpoint,

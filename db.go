@@ -107,6 +107,7 @@ type ImageModel struct {
 type SelectedModels struct {
 	ID        int64  `json:"id"`
 	ModelName string `json:"modelName"`
+	ModelPath string `json:"modelPath"`
 	Action    string `json:"action"`
 }
 
@@ -258,15 +259,22 @@ func loadCompletionsRolesToDB(db *SQLiteDB, roles []CompletionsRole) error {
 	return nil
 }
 
-func AddSelectedModel(db *gorm.DB, modelName string) error {
+func SetSelectedModel(db *gorm.DB, modelName string) error {
 	// Clear any previously selected models
 	if err := db.Exec("DELETE FROM selected_models").Error; err != nil {
+		return err
+	}
+
+	// Retrieve the model path
+	var model LanguageModel
+	if err := db.Where("name = ?", modelName).First(&model).Error; err != nil {
 		return err
 	}
 
 	// Insert the new selected model
 	selectedModel := SelectedModels{
 		ModelName: modelName,
+		ModelPath: model.Path,
 	}
 
 	return db.Create(&selectedModel).Error

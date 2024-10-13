@@ -48,10 +48,16 @@ func setupRoutes(e *echo.Echo, config *Config) {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Model name is required"})
 		}
 
-		err := AddSelectedModel(db.db, modelName)
+		err := SetSelectedModel(db.db, modelName)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to set selected model"})
 		}
+
+		// update the config
+		config.SelectedModels, _ = GetSelectedModels(db.db)
+
+		// restart the completions service
+		restartCompletionsService(config, true)
 
 		// Return json object with status and model name
 		return c.JSON(http.StatusOK, map[string]string{"status": "success", "model": modelName})

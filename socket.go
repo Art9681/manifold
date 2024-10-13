@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/gorilla/websocket"
@@ -51,9 +52,28 @@ func handleWebSocketConnection(c echo.Context) error {
 	// Get the system instructions (assuming they are part of the message)
 	cpt := GetSystemTemplate(wsMessage.RoleInstructions, wsMessage.ChatMessage)
 
+	// Get the model path from the name of the model from the database
+	models, err := db.GetModels()
+	if err != nil {
+		return err
+	}
+
+	var modelPath string
+	for _, model := range models {
+		if model.Name == wsMessage.Model {
+			modelPath = model.Path
+
+			// Print the model path
+			log.Println("Model path:", modelPath)
+
+			// Set the model in the LLM client
+			llmClient.SetModel(modelPath)
+		}
+	}
+
 	// Create a new CompletionRequest using the processed prompt
 	payload := &CompletionRequest{
-		Model:       wsMessage.Model,
+		Model:       modelPath,
 		Messages:    cpt.FormatMessages(nil), // Assuming no additional variables
 		Temperature: 0.3,
 		MaxTokens:   64000, // Ensure this is set by the backend LLM config in a future commit.

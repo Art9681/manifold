@@ -19,9 +19,12 @@ import (
 )
 
 var (
-	llmClient   LLMClient
-	searchIndex bleve.Index
-	db          *SQLiteDB
+	completionsService *ExternalService
+	completionsCtx     context.Context
+	cancel             context.CancelFunc
+	llmClient          LLMClient
+	searchIndex        bleve.Index
+	db                 *SQLiteDB
 )
 
 func main() {
@@ -56,12 +59,7 @@ func main() {
 	config.LanguageModels = models
 
 	// Load the selected model from the database
-	selectedModels, err := GetSelectedModels(db.db)
-	if err != nil {
-		log.Fatal("Failed to load selected model:", err)
-	}
-
-	config.SelectedModels = selectedModels
+	config.SelectedModels, _ = GetSelectedModels(db.db)
 
 	// Initialize the rest of your application (models, services, etc.)
 	// mm := NewModelManager(config.DataPath)
@@ -108,12 +106,22 @@ func main() {
 	fmt.Println(tools)
 
 	// Declare variables for the completions service
-	var completionsService *ExternalService
-	var completionsCtx context.Context
-	var cancel context.CancelFunc
+	// var completionsService *ExternalService
+	// var completionsCtx context.Context
+	// var cancel context.CancelFunc
 
 	switch config.LLMBackend {
 	case "gguf":
+		config.Services[1].Args = []string{
+			"--model",
+			config.SelectedModels.ModelPath,
+			"--port",
+			"32182",
+			"--host",
+			"0.0.0.0",
+			"--gpu-layers",
+			"99",
+		}
 		llmService := config.Services[1]
 		completionsService = NewExternalService(llmService, verbose)
 		completionsCtx, cancel = context.WithCancel(context.Background())
@@ -188,4 +196,76 @@ func main() {
 	}()
 
 	e.Logger.Info(e.Start(fmt.Sprintf(":%d", config.Services[0].Port)))
+}
+
+// function to restart completions service with new model
+func restartCompletionsService(config *Config, verbose bool) {
+	if completionsService != nil {
+		ctx, cancelTimeout := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelTimeout()
+		if err := completionsService.Stop(ctx); err != nil {
+			log.Println(err)
+		}
+	}
+
+	// Start completions service with new model
+	switch config.LLMBackend {
+	case "gguf":
+		// args:
+		// - --model
+		// - /Users/arturoaquino/.eternal-v1/models-gguf/supernova-medius-14b/SuperNova-Medius-Q8_0.gguf
+		// - --port
+		// - 32182
+		// - --host
+		// - 0.0.0.0
+		// - --gpu-layers
+		// - 99
+		// print the selected model path
+		log.Println("Selected model path:", config.SelectedModels.ModelPath)
+		config.Services[1].Args = []string{
+			"--model",
+			config.SelectedModels.ModelPath,
+			"--port",
+			"32182",
+			"--host",
+			"0.0.0.0",
+			"--gpu-layers",
+			"99",
+		}
+		llmService := config.Services[1]
+		completionsService = NewExternalService(llmService, verbose)
+		completionsCtx, cancel = context.WithCancel(context.Background())
+
+		if err := completionsService.Start(completionsCtx); err != nil {
+			log.Fatal(err)
+		}
+
+		// Construct the base URL from Host and Port
+		baseURL := fmt.Sprintf("http://%s:%d/v1", llmService.Host, llmService.Port)
+		llmClient = NewLocalLLMClient(baseURL, "", "")
+
+	case "mlx":
+		llmService := config.Services[2]
+		llmService.Model = config.SelectedModels.ModelPath
+		completionsService = NewExternalService(llmService, verbose)
+		completionsCtx, cancel = context.WithCancel(context.Background())
+
+		if err := completionsService.Start(completionsCtx); err != nil {
+			log.Fatal(err)
+		}
+
+		// Construct the base URL from Host and Port
+		baseURL := fmt.Sprintf("http://%s:%d/v1", llmService.Host, llmService.Port)
+		llmClient = NewLocalLLMClient(baseURL, "", "")
+
+	case "openai":
+		completionsCtx, cancel = context.WithCancel(context.Background())
+		if config.OpenAIAPIKey == "" {
+			log.Fatal("OpenAI API key is not set in config")
+		}
+		llmClient = NewLocalLLMClient("https://api.openai.com/v1", "gpt-4o-mini", config.OpenAIAPIKey)
+
+	default:
+		log.Fatal("Invalid LLMBackend specified in config")
+	}
 }
