@@ -135,6 +135,32 @@ func main() {
 		llmClient = NewLocalLLMClient(baseURL, "", "")
 
 	case "mlx":
+		// args:
+		// - --host
+		// - 0.0.0.0
+		// - --port
+		// - 32182
+		// - --model
+		// - /Users/arturoaquino/.eternal-v1/models-mlx/Qwen2.5-72B-Instruct-8bit
+		// - --log-level
+		// - DEBUG
+
+		// Get the path to the folder containing the model
+		mlxModelPath := fmt.Sprintf("%s/models-mlx/%s", config.DataPath, config.SelectedModels.ModelName)
+
+		// Print the selected model path
+		log.Println("Selected model path:", mlxModelPath)
+
+		config.Services[2].Args = []string{
+			"--model",
+			mlxModelPath,
+			"--port",
+			"32182",
+			"--host",
+			"0.0.0.0",
+			"--log-level",
+			"DEBUG",
+		}
 		llmService := config.Services[2]
 		completionsService = NewExternalService(llmService, verbose)
 		completionsCtx, cancel = context.WithCancel(context.Background())
@@ -245,6 +271,23 @@ func restartCompletionsService(config *Config, verbose bool) {
 		llmClient = NewLocalLLMClient(baseURL, "", "")
 
 	case "mlx":
+		// Get the path to the folder containing the model
+		mlxModelPath := fmt.Sprintf("%s/models-mlx/%s", config.DataPath, config.SelectedModels.ModelName)
+
+		// Print the selected model path
+		log.Println("Selected model path:", mlxModelPath)
+
+		config.Services[2].Args = []string{
+			"--model",
+			mlxModelPath,
+			"--port",
+			"32182",
+			"--host",
+			"0.0.0.0",
+			"--log-level",
+			"DEBUG",
+		}
+
 		llmService := config.Services[2]
 		llmService.Model = config.SelectedModels.ModelPath
 		completionsService = NewExternalService(llmService, verbose)
