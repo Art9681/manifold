@@ -1,3 +1,4 @@
+// coderag.go
 package coderag
 
 import (
@@ -128,6 +129,46 @@ type CodeIndex struct {
 	RefactoringOpportunities []RefactoringOpportunity
 	fset                     *token.FileSet
 	mu                       sync.RWMutex
+
+	// New fields for chunks and summaries
+	chunksMu    sync.RWMutex
+	chunks      []string
+	summariesMu sync.RWMutex
+	summaries   []string
+}
+
+// NewCodeIndex creates a new instance of CodeIndex.
+func NewCodeIndex() *CodeIndex {
+	return &CodeIndex{
+		Functions:                make(map[string]*FunctionInfo),
+		Variables:                make(map[string]*VariableInfo),
+		Files:                    make(map[string][]string),
+		Packages:                 make(map[string][]string),
+		DependencyGraph:          DependencyGraph{},
+		RefactoringOpportunities: []RefactoringOpportunity{},
+		fset:                     token.NewFileSet(),
+		chunks:                   []string{},
+		summaries:                []string{},
+	}
+}
+
+// GetChunksAndSummaries retrieves all chunks and their corresponding summaries.
+// It returns two slices: one for summaries and one for chunks.
+// The lengths of both slices are equal, and each summary corresponds to the chunk at the same index.
+func (ci *CodeIndex) GetChunksAndSummaries() ([]string, []string) {
+	ci.summariesMu.RLock()
+	defer ci.summariesMu.RUnlock()
+	ci.chunksMu.RLock()
+	defer ci.chunksMu.RUnlock()
+
+	// Make copies to avoid race conditions
+	summariesCopy := make([]string, len(ci.summaries))
+	copy(summariesCopy, ci.summaries)
+
+	chunksCopy := make([]string, len(ci.chunks))
+	copy(chunksCopy, ci.chunks)
+
+	return summariesCopy, chunksCopy
 }
 
 // extractFunctionName parses the user prompt to extract the function name.
@@ -239,19 +280,6 @@ func (idx *CodeIndex) handleFunctionQuery(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(fn)
 }
 
-// NewCodeIndex creates a new instance of CodeIndex.
-func NewCodeIndex() *CodeIndex {
-	return &CodeIndex{
-		Functions:                make(map[string]*FunctionInfo),
-		Variables:                make(map[string]*VariableInfo),
-		Files:                    make(map[string][]string),
-		Packages:                 make(map[string][]string),
-		DependencyGraph:          DependencyGraph{},
-		RefactoringOpportunities: []RefactoringOpportunity{},
-		fset:                     token.NewFileSet(),
-	}
-}
-
 // Implement the extractVariables method to process variable declarations.
 func (idx *CodeIndex) extractVariables(genDecl *ast.GenDecl, path, packageName string) {
 	for _, spec := range genDecl.Specs {
@@ -300,13 +328,13 @@ func (idx *CodeIndex) getFunctionName(fn *ast.FuncDecl) string {
 	return funcName
 }
 
-// Update analyzeCallExpr to remove or use the isMethodCall variable if necessary.
+// analyzeCallExpr analyzes a call expression within a function to build relationships.
 func (idx *CodeIndex) analyzeCallExpr(callExpr *ast.CallExpr, currentFunc *FunctionInfo) {
 	if currentFunc == nil || currentFunc.Type != "function" {
 		return
 	}
 
-	calledFunc, _ := idx.resolveCalledFunction(callExpr) // Removed unused isMethodCall variable
+	calledFunc, _ := idx.resolveCalledFunction(callExpr)
 
 	if calledFunc != "" {
 		idx.mu.Lock()
@@ -320,6 +348,193 @@ func (idx *CodeIndex) analyzeCallExpr(callExpr *ast.CallExpr, currentFunc *Funct
 	for _, arg := range callExpr.Args {
 		if nestedCall, ok := arg.(*ast.CallExpr); ok {
 			idx.analyzeCallExpr(nestedCall, currentFunc)
+		}
+	}
+}
+
+// resolveCalledFunction determines the name of the called function and whether it's a method call.
+func (idx *CodeIndex) resolveCalledFunction(callExpr *ast.CallExpr) (string, bool) {
+	var calledFunc string
+	isMethodCall := false
+
+	switch fn := callExpr.Fun.(type) {
+	case *ast.Ident:
+		calledFunc = fn.Name
+	case *ast.SelectorExpr:
+		switch x := fn.X.(type) {
+		case *ast.Ident:
+			if _, isPackage := idx.Packages[x.Name]; isPackage {
+				calledFunc = x.Name + "." + fn.Sel.Name
+			} else {
+				calledFunc = fn.Sel.Name
+				isMethodCall = true
+			}
+		}
+	}
+
+	return calledFunc, isMethodCall
+}
+
+// SummarizeCode sends the code to OpenAI API and returns the summary.
+func (idx *CodeIndex) SummarizeCode(code string, cfg *Config) (string, error) {
+	// Construct the messages structure according to the chat completion format
+	messages := []map[string]string{
+		{"role": "system", "content": "You are a helpful AI assistant that responds in well structured markdown format. Do not repeat your instructions. Do not deviate from the topic."},
+		{"role": "user", "content": fmt.Sprintf("Provide a concise summary for the following Go function:\n\n%s", code)},
+	}
+
+	// Define the request payload using the updated structure
+	payload := map[string]interface{}{
+		"model":       cfg.OpenAIModel,
+		"messages":    messages,
+		"temperature": 0.3,
+		"stream":      false,
+	}
+
+	// Print the payload for debugging purposes
+	fmt.Println("Payload:", payload)
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal payload: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", cfg.OpenAIEndpoint, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.OpenAIAPIKey))
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Request URL: %s", cfg.OpenAIEndpoint)
+		log.Printf("Request Payload: %s", string(payloadBytes))
+		return "", fmt.Errorf("failed to send request to OpenAI: %v", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read OpenAI response: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("OpenAI API error: %s", string(bodyBytes))
+	}
+
+	var openAIResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(bodyBytes, &openAIResp); err != nil {
+		return "", fmt.Errorf("failed to unmarshal OpenAI response: %v", err)
+	}
+
+	if len(openAIResp.Choices) == 0 {
+		return "", fmt.Errorf("no summary returned by OpenAI")
+	}
+
+	// Return the content from the first choice
+	return strings.TrimSpace(openAIResp.Choices[0].Message.Content), nil
+}
+
+// GenerateSummaries generates summaries for all functions using OpenAI API one at a time.
+func (idx *CodeIndex) GenerateSummaries(cfg *Config) error {
+	for _, fn := range idx.Functions {
+		if fn.Type != "function" && fn.Type != "method" {
+			continue
+		}
+
+		// Retry mechanism for each function in case of failure
+		success := false
+		for attempt := 1; attempt <= 3; attempt++ {
+			log.Printf("Summarizing function %s (attempt %d)...", fn.Name, attempt)
+			summary, err := idx.SummarizeCode(fn.Code, cfg)
+			if err != nil {
+				log.Printf("Failed to summarize function %s: %v", fn.Name, err)
+				time.Sleep(2 * time.Second) // Backoff before retrying
+			} else {
+				fn.Summary = summary
+				log.Printf("Successfully summarized function %s.", fn.Name)
+				success = true
+				break
+			}
+		}
+
+		// If after retries it still fails, mark the summary as unavailable
+		if !success {
+			fn.Summary = "Summary not available."
+		}
+
+		// Populate chunks and summaries
+		idx.chunksMu.Lock()
+		idx.chunks = append(idx.chunks, fn.Code)
+		idx.chunksMu.Unlock()
+
+		idx.summariesMu.Lock()
+		idx.summaries = append(idx.summaries, fn.Summary)
+		idx.summariesMu.Unlock()
+	}
+	return nil
+}
+
+// SerializeToJSON serializes the CodeIndex into a JSON file.
+func (idx *CodeIndex) SerializeToJSON(outputPath string) error {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	codebase := Codebase{
+		Functions:                make(map[string]*FunctionInfo),
+		Variables:                make(map[string]*VariableInfo),
+		Files:                    make(map[string][]string),
+		Packages:                 make(map[string][]string),
+		DependencyGraph:          idx.DependencyGraph,
+		RefactoringOpportunities: idx.RefactoringOpportunities,
+	}
+
+	for name, fn := range idx.Functions {
+		codebase.Functions[name] = fn
+	}
+
+	for name, varInfo := range idx.Variables {
+		codebase.Variables[name] = varInfo
+	}
+
+	for file, funcs := range idx.Files {
+		codebase.Files[file] = funcs
+	}
+
+	for pkg, funcs := range idx.Packages {
+		codebase.Packages[pkg] = funcs
+	}
+
+	data, err := json.MarshalIndent(codebase, "", "  ")
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(outputPath, data, 0644)
+}
+
+// AnalyzeCodeSmells detects functions that exceed a specified number of lines.
+func (idx *CodeIndex) AnalyzeCodeSmells(maxLines int) {
+	for _, fn := range idx.Functions {
+		if fn.Type != "function" && fn.Type != "method" {
+			continue
+		}
+		lineCount := strings.Count(fn.Code, "\n")
+		if lineCount > maxLines {
+			opportunity := RefactoringOpportunity{
+				Description: fmt.Sprintf("Function '%s' is too long (%d lines). Consider breaking it into smaller functions.", fn.Name, lineCount),
+				Location:    fmt.Sprintf("%s:%d", fn.FilePath, fn.LineNumber),
+				Severity:    "major",
+			}
+			idx.RefactoringOpportunities = append(idx.RefactoringOpportunities, opportunity)
 		}
 	}
 }
@@ -402,8 +617,6 @@ func (idx *CodeIndex) extractFunction(fn *ast.FuncDecl, path, packageName string
 	returns := idx.extractReturns(fn)
 
 	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
 	idx.Functions[funcName] = &FunctionInfo{
 		Name:       funcName,
 		FilePath:   path,
@@ -423,6 +636,7 @@ func (idx *CodeIndex) extractFunction(fn *ast.FuncDecl, path, packageName string
 	if ast.IsExported(fn.Name.Name) {
 		idx.Packages[packageName] = append(idx.Packages[packageName], funcName)
 	}
+	idx.mu.Unlock()
 }
 
 // extractParameters and extractReturns helper functions
@@ -484,183 +698,4 @@ func (idx *CodeIndex) indexCallRelationships(path string, info os.FileInfo, err 
 	})
 
 	return nil
-}
-
-// resolveCalledFunction determines the name of the called function and whether it's a method call.
-func (idx *CodeIndex) resolveCalledFunction(callExpr *ast.CallExpr) (string, bool) {
-	var calledFunc string
-	isMethodCall := false
-
-	switch fn := callExpr.Fun.(type) {
-	case *ast.Ident:
-		calledFunc = fn.Name
-	case *ast.SelectorExpr:
-		switch x := fn.X.(type) {
-		case *ast.Ident:
-			if _, isPackage := idx.Packages[x.Name]; isPackage {
-				calledFunc = x.Name + "." + fn.Sel.Name
-			} else {
-				calledFunc = fn.Sel.Name
-				isMethodCall = true
-			}
-		}
-	}
-
-	return calledFunc, isMethodCall
-}
-
-// SummarizeCode sends the code to OpenAI API and returns the summary.
-func (idx *CodeIndex) SummarizeCode(code string, cfg *Config) (string, error) {
-	// Construct the messages structure according to the chat completion format
-	messages := []map[string]string{
-		{"role": "system", "content": "You are a helpful AI assistant that responds in well structured markdown format. Do not repeat your instructions. Do not deviate from the topic."},
-		{"role": "user", "content": fmt.Sprintf("Provide a concise summary for the following Go function:\n\n%s", code)},
-	}
-
-	// Define the request payload using the updated structure
-	payload := map[string]interface{}{
-		//"model":       cfg.OpenAIModel,
-		"messages":    messages,
-		"temperature": 0.3,
-		//"max_tokens":  150,
-		"stream": false,
-	}
-
-	// Print the payload for debugging purposes
-	fmt.Println("Payload:", payload)
-
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal payload: %v", err)
-	}
-
-	req, err := http.NewRequest("POST", cfg.OpenAIEndpoint, bytes.NewBuffer(payloadBytes))
-	if err != nil {
-		return "", fmt.Errorf("failed to create HTTP request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	//req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.OpenAIAPIKey))
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Request URL: %s", cfg.OpenAIEndpoint)
-		log.Printf("Request Payload: %s", string(payloadBytes))
-		return "", fmt.Errorf("failed to send request to OpenAI: %v", err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read OpenAI response: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("OpenAI API error: %s", string(bodyBytes))
-	}
-
-	var openAIResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(bodyBytes, &openAIResp); err != nil {
-		return "", fmt.Errorf("failed to unmarshal OpenAI response: %v", err)
-	}
-
-	if len(openAIResp.Choices) == 0 {
-		return "", fmt.Errorf("no summary returned by OpenAI")
-	}
-
-	// Return the content from the first choice
-	return strings.TrimSpace(openAIResp.Choices[0].Message.Content), nil
-}
-
-// GenerateSummaries generates summaries for all functions using OpenAI API one at a time.
-func (idx *CodeIndex) GenerateSummaries(cfg *Config) error {
-	for _, fn := range idx.Functions {
-		if fn.Type != "function" && fn.Type != "method" {
-			continue
-		}
-
-		// Retry mechanism for each function in case of failure
-		success := false
-		for attempt := 1; attempt <= 3; attempt++ {
-			log.Printf("Summarizing function %s (attempt %d)...", fn.Name, attempt)
-			summary, err := idx.SummarizeCode(fn.Code, cfg)
-			if err != nil {
-				log.Printf("Failed to summarize function %s: %v", fn.Name, err)
-				time.Sleep(2 * time.Second) // Backoff before retrying
-			} else {
-				fn.Summary = summary
-				log.Printf("Successfully summarized function %s.", fn.Name)
-				success = true
-				break
-			}
-		}
-
-		// If after retries it still fails, mark the summary as unavailable
-		if !success {
-			fn.Summary = "Summary not available."
-		}
-	}
-	return nil
-}
-
-// SerializeToJSON serializes the CodeIndex into a JSON file.
-func (idx *CodeIndex) SerializeToJSON(outputPath string) error {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-
-	codebase := Codebase{
-		Functions:                make(map[string]*FunctionInfo),
-		Variables:                make(map[string]*VariableInfo),
-		Files:                    make(map[string][]string),
-		Packages:                 make(map[string][]string),
-		DependencyGraph:          idx.DependencyGraph,
-		RefactoringOpportunities: idx.RefactoringOpportunities,
-	}
-
-	for name, fn := range idx.Functions {
-		codebase.Functions[name] = fn
-	}
-
-	for name, varInfo := range idx.Variables {
-		codebase.Variables[name] = varInfo
-	}
-
-	for file, funcs := range idx.Files {
-		codebase.Files[file] = funcs
-	}
-
-	for pkg, funcs := range idx.Packages {
-		codebase.Packages[pkg] = funcs
-	}
-
-	data, err := json.MarshalIndent(codebase, "", "  ")
-	if err != nil {
-		return err
-	}
-	return ioutil.WriteFile(outputPath, data, 0644)
-}
-
-// AnalyzeCodeSmells detects functions that exceed a specified number of lines.
-func (idx *CodeIndex) AnalyzeCodeSmells(maxLines int) {
-	for _, fn := range idx.Functions {
-		if fn.Type != "function" && fn.Type != "method" {
-			continue
-		}
-		lineCount := strings.Count(fn.Code, "\n")
-		if lineCount > maxLines {
-			opportunity := RefactoringOpportunity{
-				Description: fmt.Sprintf("Function '%s' is too long (%d lines). Consider breaking it into smaller functions.", fn.Name, lineCount),
-				Location:    fmt.Sprintf("%s:%d", fn.FilePath, fn.LineNumber),
-				Severity:    "major",
-			}
-			idx.RefactoringOpportunities = append(idx.RefactoringOpportunities, opportunity)
-		}
-	}
 }

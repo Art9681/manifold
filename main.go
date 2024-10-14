@@ -105,11 +105,6 @@ func main() {
 	fmt.Println("Registered Tools:")
 	fmt.Println(tools)
 
-	// Declare variables for the completions service
-	// var completionsService *ExternalService
-	// var completionsCtx context.Context
-	// var cancel context.CancelFunc
-
 	switch config.LLMBackend {
 	case "gguf":
 		config.Services[1].Args = []string{
@@ -135,16 +130,6 @@ func main() {
 		llmClient = NewLocalLLMClient(baseURL, "", "")
 
 	case "mlx":
-		// args:
-		// - --host
-		// - 0.0.0.0
-		// - --port
-		// - 32182
-		// - --model
-		// - /Users/arturoaquino/.eternal-v1/models-mlx/Qwen2.5-72B-Instruct-8bit
-		// - --log-level
-		// - DEBUG
-
 		// Get the path to the folder containing the model
 		mlxModelPath := fmt.Sprintf("%s/models-mlx/%s", config.DataPath, config.SelectedModels.ModelName)
 
