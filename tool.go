@@ -15,6 +15,7 @@ import (
 
 	"manifold/internal/web"
 
+	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 )
 
@@ -103,7 +104,7 @@ func (wm *WorkflowManager) ListTools() []string {
 }
 
 // Run executes all enabled tools in the workflow sequentially.
-func (wm *WorkflowManager) Run(ctx context.Context, prompt string) (string, error) {
+func (wm *WorkflowManager) Run(ctx context.Context, prompt string, c *websocket.Conn) (string, error) {
 	// If no tools are enabled, return the prompt as is
 	if len(wm.tools) == 0 {
 		return prompt, nil
@@ -115,6 +116,9 @@ func (wm *WorkflowManager) Run(ctx context.Context, prompt string) (string, erro
 	var allContent strings.Builder
 
 	for _, wrapper := range wm.tools {
+		formattedContent := fmt.Sprintf("<div id='model-info-container' class='panel-body flex-grow-1 overflow-auto px-4 py-3'><h3>%s</h3></div>", wrapper.Name)
+		c.WriteMessage(websocket.TextMessage, []byte(formattedContent))
+
 		processed, err := wrapper.Tool.Process(ctx, prompt)
 		if err != nil {
 			log.Printf("error processing with tool %s: %v", wrapper.Name, err)

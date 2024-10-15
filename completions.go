@@ -225,7 +225,7 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 	fmt.Println(userPrompt)
 
 	// Process the user prompt through the WorkflowManager
-	processedPrompt, err := globalWM.Run(context.Background(), payload.Messages[1].Content)
+	processedPrompt, err := globalWM.Run(context.Background(), payload.Messages[1].Content, c)
 	if err != nil {
 		log.Printf("Error processing prompt through WorkflowManager: %v", err)
 	}
