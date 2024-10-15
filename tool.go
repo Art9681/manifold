@@ -1,4 +1,4 @@
-// tool.go
+// manifold/tool.go
 
 package main
 
@@ -72,6 +72,36 @@ func RegisterTools(wm *WorkflowManager, config *Config) error {
 				}
 				wm.AddTool(tool, toolConfig.Name)
 			}
+		case "teams":
+			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
+				// Assume team_server is at index 5
+				if len(config.Services) < 6 {
+					return fmt.Errorf("insufficient services configured for tool 'teams'")
+				}
+				teamServiceConfig := config.Services[5]
+
+				// Print the service configuration for debugging
+				log.Printf("Teams Service Config: %v", teamServiceConfig)
+
+				// Prepare parameters including service configuration
+				teamsParams := map[string]interface{}{
+					"enabled": enabled,
+					"service_config": map[string]interface{}{
+						"name":    teamServiceConfig.Name,
+						"host":    teamServiceConfig.Host,
+						"port":    teamServiceConfig.Port,
+						"command": teamServiceConfig.Command,
+						"args":    teamServiceConfig.Args,
+					},
+				}
+
+				tool := &TeamsTool{}
+				err := tool.SetParams(teamsParams)
+				if err != nil {
+					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
+				}
+				wm.AddTool(tool, toolConfig.Name)
+			}
 		}
 	}
 
@@ -124,6 +154,9 @@ func (wm *WorkflowManager) Run(ctx context.Context, prompt string, c *websocket.
 		if err != nil {
 			log.Printf("error processing with tool %s: %v", wrapper.Name, err)
 		}
+
+		// Print the processed output for debugging
+		log.Printf("Processed output from tool %s: %s", wrapper.Name, processed)
 
 		// Append the processed output to the final content
 		allContent.WriteString(processed)
@@ -389,6 +422,164 @@ func (t *RetrievalTool) Enabled() bool {
 	return t.enabled
 }
 
+// TeamsTool is a new tool for integrating with the Teams service.
+type TeamsTool struct {
+	enabled       bool
+	service       *ExternalService
+	serviceConfig ServiceConfig
+	client        LLMClient
+	mu            sync.Mutex // To ensure thread-safe operations
+}
+
+// Process sends the user prompt to the Teams service and appends the response.
+func (t *TeamsTool) Process(ctx context.Context, input string) (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// if !t.enabled {
+	// 	return "", errors.New("TeamsTool is disabled")
+	// }
+
+	// Print the input for debugging
+	log.Printf("TeamsTool: Input: %s", input)
+
+	// Retrieve the text between {} as user prompt
+	userPrompt := input[strings.Index(input, "{")+1 : strings.LastIndex(input, "}")]
+
+	//ins := fmt.Sprintf("Prompt: %s - How can the previous prompt be enhanced with better instructions? Respond with the enhanced prompt only. Do not attempt to answer the prompt. Never output code.", userPrompt)
+	ins := fmt.Sprintf("Prompt: %s - Given the previous text, output a list of questions we should answer in order to respond accurately. Never output questions that do not serve to respod to the prompt. Stick to the topic and the topic only. Do not provide an answer to the Prompt. Only the set of questions.", userPrompt)
+	cpt := GetSystemTemplate("", ins)
+
+	// Create a new LLM Client
+	llmClient := NewLocalLLMClient("http://0.0.0.0:32185/v1", "", "")
+
+	// Create the completion request payload
+	payload := &CompletionRequest{
+		Model:       "teams-model", // Update with the actual model name if needed
+		Messages:    cpt.FormatMessages(nil),
+		Temperature: 0.1, // Adjust parameters as needed
+		TopP:        0.9,
+		MaxTokens:   4096,
+		Stream:      false, // As per requirement
+	}
+
+	// Print the payload for debugging
+	log.Printf("TeamsTool: Payload: %v", payload)
+
+	// Send the completion request to the Teams service
+	resp, err := llmClient.SendCompletionRequest(payload)
+	if err != nil {
+		log.Printf("TeamsTool: Error sending completion request: %v", err)
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	// Parse the response
+	var completionResp CompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&completionResp); err != nil {
+		log.Printf("TeamsTool: Error decoding completion response: %v", err)
+		return "", err
+	}
+
+	if len(completionResp.Choices) == 0 {
+		return "", errors.New("TeamsTool: No choices returned from completion response")
+	}
+
+	// Extract the content from the first choice
+	responseContent := completionResp.Choices[0].Message.Content
+
+	// Print the response content for debugging
+	log.Printf("TeamsTool: Response Content: %s", responseContent)
+
+	// Append the response as a document
+	err = SaveChatTurn(input, responseContent, time.Now().Format(time.RFC3339))
+	if err != nil {
+		log.Printf("TeamsTool: Failed to save chat turn: %v", err)
+	}
+
+	return responseContent, nil
+}
+
+// Enabled returns the enabled status of the tool.
+func (t *TeamsTool) Enabled() bool {
+	return t.enabled
+}
+
+// SetParams configures the tool with provided parameters, including starting the service if enabled.
+func (t *TeamsTool) SetParams(params map[string]interface{}) error {
+	if enabled, ok := params["enabled"].(bool); ok {
+		t.enabled = enabled
+	}
+
+	args := []string{
+		"--model",
+		"/Users/arturoaquino/.eternal-v1/models-gguf/llama-3.2-3b/Llama-3.2-1B-Instruct-Q8_0.gguf",
+		"--port",
+		"32185",
+		"--host",
+		"0.0.0.0",
+		"--gpu-layers",
+		"99",
+	}
+
+	// Create a new ServiceConfig for the Teams tool
+	t.serviceConfig = ServiceConfig{
+		Name:    "Teams",
+		Command: "/Users/arturoaquino/Documents/code/llama.cpp/llama-server",
+		Args:    args,
+	}
+
+	if t.enabled {
+		// Initialize and start the ExternalService
+		t.service = NewExternalService(t.serviceConfig, false) // Set verbose as needed
+		if err := t.service.Start(context.Background()); err != nil {
+			return fmt.Errorf("TeamsTool: failed to start external service: %w", err)
+		}
+
+		// Initialize the LLMClient pointing to the Teams service
+		baseURL := fmt.Sprintf("http://%s:%d/v1", t.serviceConfig.Host, t.serviceConfig.Port)
+		t.client = NewLocalLLMClient(baseURL, "", "") // Adjust APIKey if needed
+	}
+
+	return nil
+}
+
+// GetParams returns the tool's parameters.
+func (t *TeamsTool) GetParams() map[string]interface{} {
+	params := map[string]interface{}{
+		"enabled": t.enabled,
+	}
+
+	// Include service configuration
+	if t.serviceConfig.Name != "" {
+		params["service_config"] = map[string]interface{}{
+			"name":    t.serviceConfig.Name,
+			"host":    t.serviceConfig.Host,
+			"port":    t.serviceConfig.Port,
+			"command": t.serviceConfig.Command,
+			"args":    t.serviceConfig.Args,
+		}
+	}
+
+	return params
+}
+
+// Helper function to convert interface{} to []string
+func interfaceToStringSlice(input interface{}) []string {
+	if input == nil {
+		return []string{}
+	}
+	interfaceSlice, ok := input.([]interface{})
+	if !ok {
+		return []string{}
+	}
+	strSlice := make([]string, len(interfaceSlice))
+	for i, v := range interfaceSlice {
+		strSlice[i], _ = v.(string)
+	}
+	return strSlice
+}
+
 // CreateToolByName is a helper function to create a tool by its name
 func CreateToolByName(toolName string) (Tool, error) {
 	switch toolName {
@@ -398,6 +589,8 @@ func CreateToolByName(toolName string) (Tool, error) {
 		return &WebGetTool{}, nil
 	case "retrieval":
 		return &RetrievalTool{}, nil
+	case "teams": // Add this case for the "teams" tool
+		return &TeamsTool{}, nil
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // ManagedService defines the interface for external services
@@ -84,7 +85,7 @@ func (es *ExternalService) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Additional function to handle workflow manager updates when a tool is toggled
+// UpdateWorkflowManagerForToolToggle handles enabling or disabling tools, including starting/stopping services.
 func UpdateWorkflowManagerForToolToggle(toolName string, enabled bool) {
 	wm := GetGlobalWorkflowManager()
 	if wm == nil {
@@ -92,25 +93,108 @@ func UpdateWorkflowManagerForToolToggle(toolName string, enabled bool) {
 		return
 	}
 
-	if enabled {
-		// Logic to register the tool with the WorkflowManager
-		tool, err := CreateToolByName(toolName)
-		if err != nil {
-			log.Printf("Failed to create tool '%s': %v", toolName, err)
+	switch toolName {
+	case "teams":
+		// Handle the Teams tool specifically
+		var teamsTool *TeamsTool
+		for _, wrapper := range wm.tools {
+			if wrapper.Name == "teams" {
+				var ok bool
+				teamsTool, ok = wrapper.Tool.(*TeamsTool)
+				if !ok {
+					log.Println("Failed to cast to TeamsTool")
+					return
+				}
+				break
+			}
+		}
+
+		if teamsTool == nil {
+			log.Println("TeamsTool not found in WorkflowManager")
 			return
 		}
-		err = wm.AddTool(tool, toolName)
-		if err != nil {
-			log.Printf("Failed to add tool '%s' to WorkflowManager: %v", toolName, err)
-		}
-		log.Printf("Tool '%s' has been enabled and added to WorkflowManager", toolName)
-	} else {
-		// Logic to unregister the tool from the WorkflowManager
-		err := wm.RemoveTool(toolName)
-		if err != nil {
-			log.Printf("Failed to remove tool '%s' from WorkflowManager: %v", toolName, err)
+
+		if enabled {
+			args := []string{
+				"--model",
+				"/Users/arturoaquino/.eternal-v1/models-gguf/llama3.2-1b/Llama-3.2-1B-Instruct-Q6_K_L.gguf",
+				"--port",
+				"32185",
+				"--host",
+				"0.0.0.0",
+				"--gpu-layers",
+				"99",
+			}
+
+			// Create a new ServiceConfig for the Teams tool
+			teamsTool.serviceConfig = ServiceConfig{
+				Name:    "teams",
+				Command: "/Users/arturoaquino/Documents/code/llama.cpp/llama-server",
+				Args:    args,
+			}
+
+			// Start the ExternalService
+			if teamsTool.service == nil {
+				teamsTool.service = NewExternalService(teamsTool.serviceConfig, false) // Set verbose as needed
+				if err := teamsTool.service.Start(context.Background()); err != nil {
+					log.Printf("Failed to start Teams ExternalService: %v", err)
+					return
+				}
+
+				// Initialize the LLMClient pointing to the Teams service
+				baseURL := fmt.Sprintf("http://%s:%d/v1", teamsTool.serviceConfig.Host, teamsTool.serviceConfig.Port)
+				teamsTool.client = NewLocalLLMClient(baseURL, "", "") // Adjust APIKey if needed
+
+				log.Printf("Teams tool '%s' has been enabled and service started", toolName)
+
+				// Logic to register the tool with the WorkflowManager
+				tool, err := CreateToolByName(toolName)
+				if err != nil {
+					log.Printf("Failed to create tool '%s': %v", toolName, err)
+					return
+				}
+				err = wm.AddTool(tool, toolName)
+				if err != nil {
+					log.Printf("Failed to add tool '%s' to WorkflowManager: %v", toolName, err)
+				}
+				log.Printf("Tool '%s' has been enabled and added to WorkflowManager", toolName)
+			}
 		} else {
-			log.Printf("Tool '%s' has been disabled and removed from WorkflowManager", toolName)
+			// Stop the ExternalService
+			if teamsTool.service != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := teamsTool.service.Stop(ctx); err != nil {
+					log.Printf("Failed to stop Teams ExternalService: %v", err)
+				} else {
+					teamsTool.service = nil
+					teamsTool.client = nil
+					log.Printf("Teams tool '%s' has been disabled and service stopped", toolName)
+				}
+			}
+		}
+	default:
+		if enabled {
+			// Logic to register the tool with the WorkflowManager
+			tool, err := CreateToolByName(toolName)
+			if err != nil {
+				log.Printf("Failed to create tool '%s': %v", toolName, err)
+				return
+			}
+			err = wm.AddTool(tool, toolName)
+			if err != nil {
+				log.Printf("Failed to add tool '%s' to WorkflowManager: %v", toolName, err)
+			}
+			log.Printf("Tool '%s' has been enabled and added to WorkflowManager", toolName)
+		} else {
+			// Logic to unregister the tool from the WorkflowManager
+			err := wm.RemoveTool(toolName)
+			if err != nil {
+				log.Printf("Failed to remove tool '%s' from WorkflowManager: %v", toolName, err)
+			} else {
+				log.Printf("Tool '%s' has been disabled and removed from WorkflowManager", toolName)
+			}
 		}
 	}
+
 }
