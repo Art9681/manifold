@@ -24,6 +24,7 @@ type Tool interface {
 	Process(ctx context.Context, input string) (string, error)
 	Enabled() bool
 	SetParams(params map[string]interface{}) error
+	GetParams() map[string]interface{}
 }
 
 // ToolWrapper wraps a Tool with its name for management.
@@ -262,6 +263,17 @@ func (t *WebSearchTool) SetParams(params map[string]interface{}) error {
 	return nil
 }
 
+// GetParams returns the tool's parameters.
+func (t *WebSearchTool) GetParams() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled":       t.enabled,
+		"search_engine": t.SearchEngine,
+		"endpoint":      t.Endpoint,
+		"top_n":         t.TopN,
+		"concurrency":   t.Concurrency,
+	}
+}
+
 // WebGetTool is a new tool for fetching and processing HTML content from URLs in the prompt.
 type WebGetTool struct {
 	enabled bool
@@ -317,6 +329,13 @@ func (t *WebGetTool) SetParams(params map[string]interface{}) error {
 	return nil
 }
 
+// GetParams returns the tool's parameters.
+func (t *WebGetTool) GetParams() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled": t.enabled,
+	}
+}
+
 type RetrievalTool struct {
 	enabled bool
 	topN    int
@@ -334,6 +353,14 @@ func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
 	}
 
 	return nil
+}
+
+// GetParams returns the tool's parameters.
+func (t *RetrievalTool) GetParams() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled": t.enabled,
+		"top_n":   t.topN,
+	}
 }
 
 // Process is the main method that processes the input using sqlite fts5

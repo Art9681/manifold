@@ -61,18 +61,6 @@ func main() {
 	// Load the selected model from the database
 	config.SelectedModels, _ = GetSelectedModels(db.db)
 
-	// Initialize the rest of your application (models, services, etc.)
-	// mm := NewModelManager(config.DataPath)
-	// modelPaths, err := mm.ScanModels()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// log.Println("Found models:")
-	// for _, modelPath := range modelPaths {
-	// 	log.Println(modelPath)
-	// }
-
 	// Initialize Echo instance
 	e := echo.New()
 	e.Use(middleware.Logger())
@@ -94,10 +82,24 @@ func main() {
 	// Set as global instance
 	SetGlobalWorkflowManager(wm)
 
-	// Register tools based on configuration
-	err = RegisterTools(wm, config)
-	if err != nil {
-		log.Printf("Failed to register tools: %v", err)
+	// Register the enabled tools
+	for _, toolConfig := range config.Tools {
+		params, _ := db.GetToolMetadataByName(toolConfig.Name)
+
+		if params.Enabled {
+			// Create the tool
+			tool, err := CreateToolByName(toolConfig.Name)
+			if err != nil {
+				log.Printf("Failed to create tool '%s': %v", toolConfig.Name, err)
+				continue
+			}
+
+			// Add the tool to the WorkflowManager
+			err = wm.AddTool(tool, toolConfig.Name)
+			if err != nil {
+				log.Printf("Failed to add tool '%s' to WorkflowManager: %v", toolConfig.Name, err)
+			}
+		}
 	}
 
 	// Get the list of tools from the WorkflowManager
