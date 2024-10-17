@@ -86,7 +86,7 @@ func (es *ExternalService) Stop(ctx context.Context) error {
 }
 
 // UpdateWorkflowManagerForToolToggle handles enabling or disabling tools, including starting/stopping services.
-func UpdateWorkflowManagerForToolToggle(toolName string, enabled bool) {
+func UpdateWorkflowManagerForToolToggle(toolName string, enabled bool, config *Config) {
 	wm := GetGlobalWorkflowManager()
 	if wm == nil {
 		log.Println("WorkflowManager is not initialized")
@@ -109,27 +109,18 @@ func UpdateWorkflowManagerForToolToggle(toolName string, enabled bool) {
 			}
 		}
 
-		if teamsTool == nil {
-			log.Println("TeamsTool not found in WorkflowManager")
-			return
-		}
+		// if teamsTool == nil {
+		// 	log.Println("TeamsTool not found in WorkflowManager")
+		// 	return
+		// }
 
 		if enabled {
-			args := []string{
-				"--model",
-				"/Users/arturoaquino/.eternal-v1/models-gguf/llama3.2-1b/Llama-3.2-1B-Instruct-Q6_K_L.gguf",
-				"--port",
-				"32185",
-				"--host",
-				"0.0.0.0",
-				"--gpu-layers",
-				"99",
-			}
+			args := config.Services[5].Args
 
 			// Create a new ServiceConfig for the Teams tool
 			teamsTool.serviceConfig = ServiceConfig{
 				Name:    "teams",
-				Command: "/Users/arturoaquino/Documents/code/llama.cpp/llama-server",
+				Command: config.Services[5].Command,
 				Args:    args,
 			}
 

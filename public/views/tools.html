@@ -18,8 +18,8 @@
             <div id="teamsCollapse" class="accordion-collapse collapse show">
               <div class="accordion-body">
                 <div class="form-check-reverse form-switch d-flex justify-content-between align-items-center mb-2">
-                  <label class="form-check-label" for="team-switch">Enable</label>
-                  <input class="form-check-input" type="checkbox" role="switch" id="team-switch" onclick="toggleTeamTool()">
+                  <label class="form-check-label" for="teams-switch">Enable</label>
+                  <input class="form-check-input" type="checkbox" role="switch" id="teams-switch" onclick="toggleTeamsTool()">
                 </div>
               </div>
             </div>
@@ -96,7 +96,7 @@
 
   // Fetch tool data from the backend
   function fetchToolData() {
-    fetch('http://192.168.0.110:32180/v1/tools/list')
+    fetch(`/v1/tools/list`)
       .then(response => response.json())
       .then(data => {
         // Store each tool's data in localStorage and set toggle states
@@ -145,8 +145,8 @@
   }
 
   // Toggle the individual tools
-  function toggleTeamTool() {
-    const isEnabled = document.getElementById('team-switch').checked;
+  function toggleTeamsTool() {
+    const isEnabled = document.getElementById('teams-switch').checked;
     toggleTool('teams', isEnabled);
   }
 

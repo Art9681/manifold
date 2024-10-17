@@ -325,3 +325,23 @@ span.hljs-regexp {
 span.hljs-tag {
     color: #f92672;
 }
+
+.bg-gradient {
+    background: linear-gradient(270deg, #2a2a2a, #404040, #2a2a2a);
+    background-size: 400% 400%;
+    animation: gradientAnimation 8s ease infinite;
+}
+
+@keyframes gradientAnimation {
+    0% {
+        background-position: 0% 50%;
+    }
+
+    50% {
+        background-position: 100% 50%;
+    }
+
+    100% {
+        background-position: 0% 50%;
+    }
+}

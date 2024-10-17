@@ -215,7 +215,6 @@ func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.R
 }
 
 func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID int, model string, payload *CompletionRequest, responseBuffer *bytes.Buffer) error {
-
 	// Get the string in between brackets for the user prompt
 	userPrompt := payload.Messages[1].Content
 	userPrompt = userPrompt[1 : len(userPrompt)-1]
@@ -234,6 +233,10 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 	payload.Messages[1].Content = processedPrompt
 
 	timestamp := time.Now().Format(time.RFC3339)
+
+	statusMsg := "Thinking..."
+	formattedContent := fmt.Sprintf("<div id='progress' class='progress-bar placeholder-wave fs-5' style='width: 100%%;'>%s</div>", statusMsg)
+	c.WriteMessage(websocket.TextMessage, []byte(formattedContent))
 
 	// Use llmClient to send the request
 	resp, err := llmClient.SendCompletionRequest(payload)

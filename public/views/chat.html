@@ -1,169 +1,177 @@
 {{define "chat"}}
 <div name="chat-{{.turnID}}" id="chat-{{.turnID}}">
-    <div class="row">
-      <div id="prompt-{{.turnID}}" class="user-prompt rounded-2 mt-3 pb-3" style="background-color: var(--et-card-bg);">
-        <div>
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-            <g fill="currentColor">
-              <path fill-rule="evenodd"
-                d="M12 2.75a9.25 9.25 0 1 0 0 18.5a9.25 9.25 0 0 0 0-18.5ZM1.25 12C1.25 6.063 6.063 1.25 12 1.25S22.75 6.063 22.75 12S17.937 22.75 12 22.75S1.25 17.937 1.25 12Zm7.147 3.553a.75.75 0 0 1 1.05-.155c.728.54 1.607.852 2.553.852s1.825-.313 2.553-.852a.75.75 0 1 1 .894 1.204A5.766 5.766 0 0 1 12 17.75a5.766 5.766 0 0 1-3.447-1.148a.75.75 0 0 1-.156-1.049Z"
-                clip-rule="evenodd" />
-              <path
-                d="M16 10.5c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5s.448-1.5 1-1.5s1 .672 1 1.5Zm-6 0c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5S8.448 9 9 9s1 .672 1 1.5Z" />
-            </g>
-          </svg>
-          <span class="badge my-3 mx-1 bg-gradient"
-            style="background-color: var(--et-galactic-accent);">{{.username}}</span>
-        </div>
-        <!-- The trigger delay for the websocket is necessary to prevent duplicate prompt submissions -->
-        <!-- https://github.com/bigskysoftware/htmx/issues/2141 -->
-        <form id="hidden-form-{{.turnID}}" style="display:none;" hx-trigger="load delay:1ms" ws-send>
-          <input type="hidden" name="model" value="{{.model}}">
-          <input type="hidden" name="chat_message" value="{{.message}}">
-          <input type="hidden" name="role_instructions" value="{{.roleInstructions}}">
-        </form>
-        <div>
-          <span class="message-content mx-1">{{.message}}</span>
-        </div>
+  <div class="row">
+    <div id="prompt-{{.turnID}}" class="user-prompt rounded-2 mt-3 pb-3" style="background-color: var(--et-card-bg);">
+      <div>
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+          <g fill="currentColor">
+            <path fill-rule="evenodd"
+              d="M12 2.75a9.25 9.25 0 1 0 0 18.5a9.25 9.25 0 0 0 0-18.5ZM1.25 12C1.25 6.063 6.063 1.25 12 1.25S22.75 6.063 22.75 12S17.937 22.75 12 22.75S1.25 17.937 1.25 12Zm7.147 3.553a.75.75 0 0 1 1.05-.155c.728.54 1.607.852 2.553.852s1.825-.313 2.553-.852a.75.75 0 1 1 .894 1.204A5.766 5.766 0 0 1 12 17.75a5.766 5.766 0 0 1-3.447-1.148a.75.75 0 0 1-.156-1.049Z"
+              clip-rule="evenodd" />
+            <path
+              d="M16 10.5c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5s.448-1.5 1-1.5s1 .672 1 1.5Zm-6 0c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5S8.448 9 9 9s1 .672 1 1.5Z" />
+          </g>
+        </svg>
+        <span class="badge my-3 mx-1 bg-gradient" style="background-color: var(--et-galactic-accent);">{{.username}}
+        </span>
+      </div>
+      <!-- The trigger delay for the websocket is necessary to prevent duplicate prompt submissions -->
+      <!-- https://github.com/bigskysoftware/htmx/issues/2141 -->
+      <form id="hidden-form-{{.turnID}}" style="display:none;" hx-trigger="load delay:1ms" ws-send>
+        <input type="hidden" name="model" value="{{.model}}">
+        <input type="hidden" name="chat_message" value="{{.message}}">
+        <input type="hidden" name="role_instructions" value="{{.roleInstructions}}">
+      </form>
+      <div>
+        <span class="message-content mx-1">{{.message}}</span>
       </div>
     </div>
-    <div class="row">
-      <div id="response-{{.turnID}}" class="response rounded-2 mt-3 pb-3" style="background-color: var(--et-card-bg);">
-        <div>
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-            <g fill="currentColor">
-              <path
-                d="M16 10.5c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5s.448-1.5 1-1.5s1 .672 1 1.5Zm-6 0c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5S8.448 9 9 9s1 .672 1 1.5Z" />
-              <path fill-rule="evenodd"
-                d="M11.943 1.25h.114c2.309 0 4.118 0 5.53.19c1.444.194 2.584.6 3.479 1.494c.895.895 1.3 2.035 1.494 3.48c.19 1.411.19 3.22.19 5.529v.114c0 2.309 0 4.118-.19 5.53c-.194 1.444-.6 2.584-1.494 3.479c-.895.895-2.035 1.3-3.48 1.494c-1.411.19-3.22.19-5.529.19h-.114c-2.309 0-4.118 0-5.53-.19c-1.444-.194-2.584-.6-3.479-1.494c-.895-.895-1.3-2.035-1.494-3.48c-.19-1.411-.19-3.22-.19-5.529v-.114c0-2.309 0-4.118.19-5.53c.194-1.444.6-2.584 1.494-3.479c.895-.895 2.035-1.3 3.48-1.494c1.411-.19 3.22-.19 5.529-.19Zm-5.33 1.676c-1.278.172-2.049.5-2.618 1.069c-.57.57-.897 1.34-1.069 2.619c-.174 1.3-.176 3.008-.176 5.386s.002 4.086.176 5.386c.172 1.279.5 2.05 1.069 2.62c.57.569 1.34.896 2.619 1.068c1.3.174 3.008.176 5.386.176s4.086-.002 5.386-.176c1.279-.172 2.05-.5 2.62-1.069c.569-.57.896-1.34 1.068-2.619c.174-1.3.176-3.008.176-5.386s-.002-4.086-.176-5.386c-.172-1.279-.5-2.05-1.069-2.62c-.57-.569-1.34-.896-2.619-1.068c-1.3-.174-3.008-.176-5.386-.176s-4.086.002-5.386.176Zm1.784 12.627a.75.75 0 0 1 1.05-.155c.728.54 1.607.852 2.553.852s1.825-.313 2.553-.852a.75.75 0 1 1 .894 1.204A5.766 5.766 0 0 1 12 17.75a5.766 5.766 0 0 1-3.447-1.148a.75.75 0 0 1-.156-1.049Z"
-                clip-rule="evenodd" />
-            </g>
-          </svg>
-          <span class="badge my-3 mx-1 bg-gradient end-0"
-            style="background-color: var(--et-galactic-accent);">{{.assistant}}</span>
-        </div>
-        <div name="chat-{{.turnID}}" id="response-content-{{.turnID}}" hx-trigger="load, customEndOfStream"
-          hx-on:load="highlight()">
-          <div class="loadership_JTACT">
-            <div></div>
-            <div></div>
-            <div></div>
-            <div></div>
-            <div></div>
-            <div></div>
-            <div></div>
-            <div></div>
-            <div></div>
-            <div></div>
-            <div></div>
-            <div></div>
+  </div>
+  <div class="row">
+    <div id="response-{{.turnID}}" class="response rounded-2 mt-3 pb-3" style="background-color: var(--et-card-bg);">
+      <div>
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+          <g fill="currentColor">
+            <path
+              d="M16 10.5c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5s.448-1.5 1-1.5s1 .672 1 1.5Zm-6 0c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5S8.448 9 9 9s1 .672 1 1.5Z" />
+            <path fill-rule="evenodd"
+              d="M11.943 1.25h.114c2.309 0 4.118 0 5.53.19c1.444.194 2.584.6 3.479 1.494c.895.895 1.3 2.035 1.494 3.48c.19 1.411.19 3.22.19 5.529v.114c0 2.309 0 4.118-.19 5.53c-.194 1.444-.6 2.584-1.494 3.479c-.895.895-2.035 1.3-3.48 1.494c-1.411.19-3.22.19-5.529.19h-.114c-2.309 0-4.118 0-5.53-.19c-1.444-.194-2.584-.6-3.479-1.494c-.895-.895-1.3-2.035-1.494-3.48c-.19-1.411-.19-3.22-.19-5.529v-.114c0-2.309 0-4.118.19-5.53c.194-1.444.6-2.584 1.494-3.479c.895-.895 2.035-1.3 3.48-1.494c1.411-.19 3.22-.19 5.529-.19Zm-5.33 1.676c-1.278.172-2.049.5-2.618 1.069c-.57.57-.897 1.34-1.069 2.619c-.174 1.3-.176 3.008-.176 5.386s.002 4.086.176 5.386c.172 1.279.5 2.05 1.069 2.62c.57.569 1.34.896 2.619 1.068c1.3.174 3.008.176 5.386.176s4.086-.002 5.386-.176c1.279-.172 2.05-.5 2.62-1.069c.569-.57.896-1.34 1.068-2.619c.174-1.3.176-3.008.176-5.386s-.002-4.086-.176-5.386c-.172-1.279-.5-2.05-1.069-2.62c-.57-.569-1.34-.896-2.619-1.068c-1.3-.174-3.008-.176-5.386-.176s-4.086.002-5.386.176Zm1.784 12.627a.75.75 0 0 1 1.05-.155c.728.54 1.607.852 2.553.852s1.825-.313 2.553-.852a.75.75 0 1 1 .894 1.204A5.766 5.766 0 0 1 12 17.75a5.766 5.766 0 0 1-3.447-1.148a.75.75 0 0 1-.156-1.049Z"
+              clip-rule="evenodd" />
+          </g>
+        </svg>
+        <span class="badge my-3 mx-1 bg-gradient end-0"
+          style="background-color: var(--et-galactic-accent);">{{.assistant}}
+        </span>
+      </div>
+      <div name="chat-{{.turnID}}" id="response-content-{{.turnID}}" hx-trigger="load, customEndOfStream"
+        hx-on:load="highlight()">
+        <div class="d-flex align-items-center">
+          <div class="progress flex-grow-1 specific-h-25" role="status" aria-label="Loading">
+            <div id="progress" class="progress-bar placeholder-wave fs-5" style="width: 100%;">
+              Thinking...
+            </div>
           </div>
+        </div>
+        <div class="loadership_JTACT">
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
+          <div></div>
         </div>
       </div>
     </div>
   </div>
-  
-  <script>
-    document.getElementById("chat-view").addEventListener("scroll", function () {
-      const chatView = document.getElementById("chat-view");
-      const scrollToBottomBtn = document.getElementById("scroll-to-bottom-btn");
-  
-      userHasScrolled = chatView.scrollHeight - chatView.scrollTop > chatView.clientHeight + 1;
-  
-      if (userHasScrolled) {
-        scrollToBottomBtn.style.display = 'block';
-      } else {
-        scrollToBottomBtn.style.display = 'none';
-      }
-    });
-  
-    document.getElementById("scroll-to-bottom-btn").addEventListener("click", function () {
-      const chatView = document.getElementById("chat-view");
+</div>
+
+<script>
+  document.getElementById("chat-view").addEventListener("scroll", function () {
+    const chatView = document.getElementById("chat-view");
+    const scrollToBottomBtn = document.getElementById("scroll-to-bottom-btn");
+
+    userHasScrolled = chatView.scrollHeight - chatView.scrollTop > chatView.clientHeight + 1;
+
+    if (userHasScrolled) {
+      scrollToBottomBtn.style.display = 'block';
+    } else {
+      scrollToBottomBtn.style.display = 'none';
+    }
+  });
+
+  document.getElementById("scroll-to-bottom-btn").addEventListener("click", function () {
+    const chatView = document.getElementById("chat-view");
+    chatView.scrollTop = chatView.scrollHeight;
+    userHasScrolled = false;
+    this.style.display = 'none';
+  });
+
+  htmx.on("htmx:wsAfterMessage", function (evt) {
+    const box = document.querySelector(".box");
+    const newRotation = chatRotation();
+    box.style.transition = "transform 0.2s ease";
+    box.style.transform = newRotation;
+    highlight();
+
+    const chatView = document.getElementById("chat-view");
+    const scrollToBottomBtn = document.getElementById("scroll-to-bottom-btn");
+
+    if (!userHasScrolled) {
       chatView.scrollTop = chatView.scrollHeight;
-      userHasScrolled = false;
-      this.style.display = 'none';
-    });
-  
-    htmx.on("htmx:wsAfterMessage", function (evt) {
-      const box = document.querySelector(".box");
-      const newRotation = chatRotation();
-      box.style.transition = "transform 0.2s ease";
-      box.style.transform = newRotation;
-      highlight();
-  
-      const chatView = document.getElementById("chat-view");
-      const scrollToBottomBtn = document.getElementById("scroll-to-bottom-btn");
-  
-      if (!userHasScrolled) {
-        chatView.scrollTop = chatView.scrollHeight;
-        scrollToBottomBtn.style.display = 'none';
-      }
-    });
-  
-    htmx.on("htmx:wsOpen", function (evt) {
-      console.log("WebSocket opened");
-      const box = document.querySelector(".box");
-      if (box) {
-        box.style.transition = "transform 0.5s ease";
-        box.style.transform = "rotateX(45deg) rotateY(45deg) rotateZ(-180deg)";
-      }
-    });
-  
-    // onerror event handler
-    htmx.on("htmx:wsOnError", function (evt) {
-      console.log("WebSocket error");
-      // Print the event to the console
-      console.log(evt);
-      highlight();
-      const box = document.querySelector(".box");
-      const newRotation = getRandomRotation();
+      scrollToBottomBtn.style.display = 'none';
+    }
+  });
+
+  htmx.on("htmx:wsOpen", function (evt) {
+    console.log("WebSocket opened");
+    const box = document.querySelector(".box");
+    if (box) {
       box.style.transition = "transform 0.5s ease";
-      box.style.transform = newRotation;
-    });
-  
-    htmx.on("htmx:wsOnClose", function (evt) {
-      console.log("WebSocket closed");
-      // Print the event to the console
-      console.log(evt);
-      highlight();
-    });
-  
-    function highlight() {
-      const container = document.getElementById("response-content-{{.turnID}}");
-      container.querySelectorAll('pre code').forEach((block, index) => {
-        if (!block.hasAttribute('data-snippet-added')) {
-          hljs.highlightElement(block);
-          block.classList.add('rounded-2');
-          const snippet = document.createElement('codapi-snippet');
-          snippet.setAttribute('url', 'http://localhost:1313/v1');
-          snippet.setAttribute('engine', 'browser');
-          snippet.setAttribute('sandbox', 'javascript');
-          snippet.setAttribute('editor', 'basic');
-          const copyButton = document.createElement('button');
-          copyButton.classList.add('btn', 'btn-link');
-          copyButton.innerHTML = `
+      box.style.transform = "rotateX(45deg) rotateY(45deg) rotateZ(-180deg)";
+    }
+  });
+
+  // onerror event handler
+  htmx.on("htmx:wsOnError", function (evt) {
+    console.log("WebSocket error");
+    // Print the event to the console
+    console.log(evt);
+    highlight();
+    const box = document.querySelector(".box");
+    const newRotation = getRandomRotation();
+    box.style.transition = "transform 0.5s ease";
+    box.style.transform = newRotation;
+  });
+
+  htmx.on("htmx:wsOnClose", function (evt) {
+    console.log("WebSocket closed");
+    // Print the event to the console
+    console.log(evt);
+    highlight();
+  });
+
+  function highlight() {
+    const container = document.getElementById("response-content-{{.turnID}}");
+    container.querySelectorAll('pre code').forEach((block, index) => {
+      if (!block.hasAttribute('data-snippet-added')) {
+        hljs.highlightElement(block);
+        block.classList.add('rounded-2');
+        const snippet = document.createElement('codapi-snippet');
+        snippet.setAttribute('url', 'http://localhost:1313/v1');
+        snippet.setAttribute('engine', 'browser');
+        snippet.setAttribute('sandbox', 'javascript');
+        snippet.setAttribute('editor', 'basic');
+        const copyButton = document.createElement('button');
+        copyButton.classList.add('btn', 'btn-link');
+        copyButton.innerHTML = `
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
             <path fill="#FFFFFF" fill-rule="evenodd" d="M7.263 3.26A2.25 2.25 0 0 1 9.5 1.25h5a2.25 2.25 0 0 1 2.237 2.01c.764.016 1.423.055 1.987.159c.758.14 1.403.404 1.928.93c.602.601.86 1.36.982 2.26c.116.866.116 1.969.116 3.336v6.11c0 1.367 0 2.47-.116 3.337c-.122.9-.38 1.658-.982 2.26c-.602.602-1.36.86-2.26.982c-.867.116-1.97.116-3.337.116h-6.11c-1.367 0-2.47 0-3.337-.116c-.9-.122-1.658-.38-2.26-.982c-.602-.602-.86-1.36-.981-2.26c-.117-.867-.117-1.97-.117-3.337v-6.11c0-1.367 0-2.47.117-3.337c.12-.9.38-1.658.981-2.26c.525-.525 1.17-.79 1.928-.929c.564-.104 1.224-.143 1.987-.159Zm1.487.741V4.5c0 .414.336.75.75.75h5a.75.75 0 0 0 .75-.75v-1a.75.75 0 0 0-.75-.75h-5a.75.75 0 0 0-.75.75v.501Zm7.985.76A2.25 2.25 0 0 1 14.5 6.75h-5a2.25 2.25 0 0 1-2.235-1.99c-.718.016-1.272.052-1.718.134c-.566.104-.895.272-1.138.515c-.277.277-.457.665-.556 1.4c-.101.754-.103 1.756-.103 3.191v6c0 1.435.002 2.436.103 3.192c.099.734.28 1.122.556 1.399c.277.277.665.457 1.4.556c.754.101 1.756.103 3.191.103h6c1.435 0 2.436-.002 3.192-.103c.734-.099 1.122-.28 1.399-.556c.277-.277.457-.665.556-1.4c.101-.755.103-1.756.103-3.191v-6c0-1.435-.002-2.437-.103-3.192c-.099-.734-.28-1.122-.556-1.399c-.244-.243-.572-.41-1.138-.515c-.446-.082-1-.118-1.718-.133ZM6.25 14.5a.75.75 0 0 1 .75-.75h8a.75.75 0 0 1 0 1.5H7a.75.75 0 0 1-.75-.75Zm0 3.5a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 0 1.5H7a.75.75 0 0 1-.75-.75Z" clip-rule="evenodd"/>
           </svg>`;
-          copyButton.onclick = function () {
-            navigator.clipboard.writeText(block.textContent).then(() => {
-              alert('Code copied to clipboard!');
-            }, () => {
-              alert('Failed to copy code.');
-            });
-          };
-          const wrapper = document.createElement('div');
-          wrapper.setAttribute('id', 'snippet-wrapper');
-          wrapper.classList.add('rounded-2', 'mb-3');
-          wrapper.style.backgroundColor = '#252525';
-          wrapper.appendChild(snippet);
-          wrapper.appendChild(copyButton);
-          block.parentNode.insertAdjacentElement('afterend', wrapper);
-          block.setAttribute('data-snippet-added', 'true');
-        }
-      });
-    }
-  </script>
-  
+        copyButton.onclick = function () {
+          navigator.clipboard.writeText(block.textContent).then(() => {
+            alert('Code copied to clipboard!');
+          }, () => {
+            alert('Failed to copy code.');
+          });
+        };
+        const wrapper = document.createElement('div');
+        wrapper.setAttribute('id', 'snippet-wrapper');
+        wrapper.classList.add('rounded-2', 'mb-3');
+        wrapper.style.backgroundColor = '#252525';
+        wrapper.appendChild(snippet);
+        wrapper.appendChild(copyButton);
+        block.parentNode.insertAdjacentElement('afterend', wrapper);
+        block.setAttribute('data-snippet-added', 'true');
+      }
+    });
+  }
+</script>
+
 
 {{end}}

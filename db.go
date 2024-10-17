@@ -390,6 +390,9 @@ func (sqldb *SQLiteDB) GetToolMetadataByName(name string) (*ToolMetadata, error)
 
 // UpdateToolMetadataByName updates the 'enabled' status of a tool by its name.
 func (sqldb *SQLiteDB) UpdateToolMetadataByName(name string, enabled bool) error {
+
+	log.Printf("Updating tool '%s' status to %v", name, enabled)
+
 	result := sqldb.db.Model(&ToolMetadata{}).Where("name = ?", name).Update("enabled", enabled)
 	if result.Error != nil {
 		return fmt.Errorf("failed to update tool '%s' status: %w", name, result.Error)

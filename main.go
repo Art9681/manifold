@@ -44,6 +44,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Print the config.services with their index and name
+	for i, service := range config.Services {
+		log.Printf("Service %d: %s", i, service.Name)
+	}
+
 	// Initialize the application
 	db, err = initializeApplication(config)
 	if err != nil {
@@ -106,6 +111,26 @@ func main() {
 	tools := wm.ListTools()
 	fmt.Println("Registered Tools:")
 	fmt.Println(tools)
+
+	var embeddingsService *ExternalService
+	var embeddingsCtx context.Context
+
+	// Initialize the embeddings service
+	embeddingsConfig := config.Services[4]
+
+	// Print the embeddings service configuration
+	log.Println("Embeddings service configuration:")
+	log.Println(embeddingsConfig)
+
+	embeddingsService = NewExternalService(embeddingsConfig, true)
+
+	// Initialize embeddings context before starting the service
+	embeddingsCtx, embeddingsCancel := context.WithCancel(context.Background())
+	defer embeddingsCancel()
+
+	if err := embeddingsService.Start(embeddingsCtx); err != nil {
+		e.Logger.Fatal(err)
+	}
 
 	switch config.LLMBackend {
 	case "gguf":
@@ -171,15 +196,6 @@ func main() {
 		log.Fatal("Invalid LLMBackend specified in config")
 	}
 
-	var embeddingsService *ExternalService
-
-	// Initialize the embeddings service
-	embeddingsConfig := config.Services[4]
-	embeddingsService = NewExternalService(embeddingsConfig, verbose)
-	if err := embeddingsService.Start(completionsCtx); err != nil {
-		e.Logger.Fatal(err)
-	}
-
 	// Set up graceful shutdown
 	go func() {
 		quit := make(chan os.Signal, 1)
@@ -224,16 +240,6 @@ func restartCompletionsService(config *Config, verbose bool) {
 	// Start completions service with new model
 	switch config.LLMBackend {
 	case "gguf":
-		// args:
-		// - --model
-		// - /Users/arturoaquino/.eternal-v1/models-gguf/supernova-medius-14b/SuperNova-Medius-Q8_0.gguf
-		// - --port
-		// - 32182
-		// - --host
-		// - 0.0.0.0
-		// - --gpu-layers
-		// - 99
-		// print the selected model path
 		log.Println("Selected model path:", config.SelectedModels.ModelPath)
 		config.Services[1].Args = []string{
 			"--model",
@@ -244,6 +250,8 @@ func restartCompletionsService(config *Config, verbose bool) {
 			"0.0.0.0",
 			"--gpu-layers",
 			"99",
+			"--ctx-size",
+			"128000",
 		}
 		llmService := config.Services[1]
 		completionsService = NewExternalService(llmService, verbose)

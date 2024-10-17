@@ -64,7 +64,9 @@ func setupRoutes(e *echo.Echo, config *Config) {
 	})
 
 	// Tool routes
-	e.POST("/v1/tools/:toolName/toggle", handleToolToggle)
+	e.POST("/v1/tools/:toolName/toggle", func(c echo.Context) error {
+		return handleToolToggle(c, config)
+	})
 	e.GET("/v1/tools/list", handleGetTools)
 
 	// Retrieval Augmented Generation (RAG) routes

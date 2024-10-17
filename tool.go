@@ -23,7 +23,7 @@ import (
 type Tool interface {
 	Process(ctx context.Context, input string) (string, error)
 	Enabled() bool
-	SetParams(params map[string]interface{}) error
+	SetParams(params map[string]interface{}, config *Config) error
 	GetParams() map[string]interface{}
 }
 
@@ -48,7 +48,7 @@ func RegisterTools(wm *WorkflowManager, config *Config) error {
 		case "websearch":
 			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
 				tool := &WebSearchTool{}
-				err := tool.SetParams(toolConfig.Parameters)
+				err := tool.SetParams(toolConfig.Parameters, config)
 				if err != nil {
 					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
 				}
@@ -57,7 +57,7 @@ func RegisterTools(wm *WorkflowManager, config *Config) error {
 		case "webget":
 			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
 				tool := &WebGetTool{}
-				err := tool.SetParams(toolConfig.Parameters)
+				err := tool.SetParams(toolConfig.Parameters, config)
 				if err != nil {
 					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
 				}
@@ -66,7 +66,7 @@ func RegisterTools(wm *WorkflowManager, config *Config) error {
 		case "retrieval":
 			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
 				tool := &RetrievalTool{}
-				err := tool.SetParams(toolConfig.Parameters)
+				err := tool.SetParams(toolConfig.Parameters, config)
 				if err != nil {
 					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
 				}
@@ -74,10 +74,6 @@ func RegisterTools(wm *WorkflowManager, config *Config) error {
 			}
 		case "teams":
 			if enabled, ok := toolConfig.Parameters["enabled"].(bool); ok && enabled {
-				// Assume team_server is at index 5
-				if len(config.Services) < 6 {
-					return fmt.Errorf("insufficient services configured for tool 'teams'")
-				}
 				teamServiceConfig := config.Services[5]
 
 				// Print the service configuration for debugging
@@ -96,10 +92,11 @@ func RegisterTools(wm *WorkflowManager, config *Config) error {
 				}
 
 				tool := &TeamsTool{}
-				err := tool.SetParams(teamsParams)
+				err := tool.SetParams(teamsParams, config)
 				if err != nil {
 					return fmt.Errorf("failed to set params for tool %s: %w", toolConfig.Name, err)
 				}
+
 				wm.AddTool(tool, toolConfig.Name)
 			}
 		}
@@ -145,9 +142,23 @@ func (wm *WorkflowManager) Run(ctx context.Context, prompt string, c *websocket.
 	log.Printf("Enabled tools: %v", wm.ListTools())
 
 	var allContent strings.Builder
+	var teamsResponse string
 
 	for _, wrapper := range wm.tools {
-		formattedContent := fmt.Sprintf("<div id='model-info-container' class='panel-body flex-grow-1 overflow-auto px-4 py-3'><h3>%s</h3></div>", wrapper.Name)
+		var toolMessage string
+
+		switch wrapper.Name {
+		case "websearch":
+			toolMessage = "Searching the web"
+		case "webget":
+			toolMessage = "Fetching web content"
+		case "retrieval":
+			toolMessage = "Trying to remember things"
+		case "teams":
+			toolMessage = "Asking the team"
+		}
+
+		formattedContent := fmt.Sprintf("<div id='progress' class='progress-bar placeholder-wave fs-5' style='width: 100%%;'>%s</div>", toolMessage)
 		c.WriteMessage(websocket.TextMessage, []byte(formattedContent))
 
 		processed, err := wrapper.Tool.Process(ctx, prompt)
@@ -158,19 +169,28 @@ func (wm *WorkflowManager) Run(ctx context.Context, prompt string, c *websocket.
 		// Print the processed output for debugging
 		log.Printf("Processed output from tool %s: %s", wrapper.Name, processed)
 
-		// Append the processed output to the final content
-		allContent.WriteString(processed)
+		if wrapper.Name == "teams" {
+			teamsResponse = processed
+		} else {
+			allContent.WriteString(processed)
+			allContent.WriteString("\n") // Separator between tool outputs
+		}
 	}
 
 	retrievalInstructions := `\n\nYou have been provided with relevant document chunks retrieved from a retrieval-augmented generation (RAG) workflow. Use the information contained in these chunks to assist in generating your response only if it directly contributes to answering the user's prompt. You must ensure that:
 
 	You do not explicitly reference or mention the existence of these chunks.
 	You seamlessly incorporate relevant information into your response as if it were part of your own knowledge.
-	If the provided chunks are not helpful for addressing the user's prompt, you may generate a response based on your general knowledge.
-	Now proceed with answering the user's prompt:\n\n`
+	If the provided chunks are not helpful for addressing the user's prompt, you may generate a response based on your general knowledge.`
 
 	// Append the retrieval instructions to the final content
 	allContent.WriteString(retrievalInstructions)
+
+	// Append the Teams response to the final content
+	allContent.WriteString(teamsResponse)
+
+	promptDelimiter := "Now respond to the following question or instructions using the previous texts as reference. Ensure you always respond to the following: "
+	prompt = fmt.Sprintf("%s\n%s", promptDelimiter, prompt)
 
 	// Append the prompt to the final content
 	allContent.WriteString(prompt)
@@ -189,8 +209,10 @@ type WebSearchTool struct {
 
 // Process executes the web search tool logic.
 func (t *WebSearchTool) Process(ctx context.Context, input string) (string, error) {
+	params := t.GetParams()
+	log.Printf("WebSearchTool: Parameters: %v", params)
 	// Print the search engine and endpoint for debugging
-	log.Printf("Search Engine: %s, Endpoint: %s", t.SearchEngine, t.Endpoint)
+	//log.Printf("Search Engine: %s, Endpoint: %s", t.SearchEngine, t.Endpoint)
 
 	// Perform search using GetSearXNGResults
 	urls := web.GetSearXNGResults(t.Endpoint, input)
@@ -275,7 +297,7 @@ func (t *WebSearchTool) Enabled() bool {
 }
 
 // SetParams configures the tool with provided parameters.
-func (t *WebSearchTool) SetParams(params map[string]interface{}) error {
+func (t *WebSearchTool) SetParams(params map[string]interface{}, config *Config) error {
 	if enabled, ok := params["enabled"].(bool); ok {
 		t.enabled = enabled
 	}
@@ -298,12 +320,19 @@ func (t *WebSearchTool) SetParams(params map[string]interface{}) error {
 
 // GetParams returns the tool's parameters.
 func (t *WebSearchTool) GetParams() map[string]interface{} {
+	// Get the params from the database
+	params, err := db.GetToolMetadataByName("websearch")
+	if err != nil {
+		return nil
+	}
+
+	// map param.Params to a map[string]interface{}
 	return map[string]interface{}{
-		"enabled":       t.enabled,
-		"search_engine": t.SearchEngine,
-		"endpoint":      t.Endpoint,
-		"top_n":         t.TopN,
-		"concurrency":   t.Concurrency,
+		"enabled":       params.Params[1],
+		"search_engine": params.Params[2],
+		"endpoint":      params.Params[3],
+		"top_n":         params.Params[4],
+		"concurrency":   params.Params[0],
 	}
 }
 
@@ -354,7 +383,7 @@ func (t *WebGetTool) Enabled() bool {
 }
 
 // SetParams configures the tool with provided parameters.
-func (t *WebGetTool) SetParams(params map[string]interface{}) error {
+func (t *WebGetTool) SetParams(params map[string]interface{}, config *Config) error {
 	if enabled, ok := params["enabled"].(bool); ok {
 		t.enabled = enabled
 	}
@@ -375,7 +404,7 @@ type RetrievalTool struct {
 }
 
 // SetParams configures the tool with provided parameters.
-func (t *RetrievalTool) SetParams(params map[string]interface{}) error {
+func (t *RetrievalTool) SetParams(params map[string]interface{}, config *Config) error {
 	if enabled, ok := params["enabled"].(bool); ok {
 		t.enabled = enabled
 	}
@@ -488,6 +517,11 @@ func (t *TeamsTool) Process(ctx context.Context, input string) (string, error) {
 	// Extract the content from the first choice
 	responseContent := completionResp.Choices[0].Message.Content
 
+	responseIns := "Your response must address the previous questions."
+
+	// Append the response instructions to the response content
+	responseContent = fmt.Sprintf("%s\n\n%s", responseContent, responseIns)
+
 	// Print the response content for debugging
 	log.Printf("TeamsTool: Response Content: %s", responseContent)
 
@@ -506,28 +540,30 @@ func (t *TeamsTool) Enabled() bool {
 }
 
 // SetParams configures the tool with provided parameters, including starting the service if enabled.
-func (t *TeamsTool) SetParams(params map[string]interface{}) error {
+func (t *TeamsTool) SetParams(params map[string]interface{}, config *Config) error {
 	if enabled, ok := params["enabled"].(bool); ok {
 		t.enabled = enabled
 	}
 
-	args := []string{
-		"--model",
-		"/Users/arturoaquino/.eternal-v1/models-gguf/llama-3.2-3b/Llama-3.2-1B-Instruct-Q8_0.gguf",
-		"--port",
-		"32185",
-		"--host",
-		"0.0.0.0",
-		"--gpu-layers",
-		"99",
-	}
+	t.serviceConfig = config.Services[5]
 
-	// Create a new ServiceConfig for the Teams tool
-	t.serviceConfig = ServiceConfig{
-		Name:    "Teams",
-		Command: "/Users/arturoaquino/Documents/code/llama.cpp/llama-server",
-		Args:    args,
-	}
+	// args := []string{
+	// 	"--model",
+	// 	"/Users/arturoaquino/.eternal-v1/models-gguf/llama-3.2-3b/Llama-3.2-1B-Instruct-Q8_0.gguf",
+	// 	"--port",
+	// 	"32185",
+	// 	"--host",
+	// 	"0.0.0.0",
+	// 	"--gpu-layers",
+	// 	"99",
+	// }
+
+	// // Create a new ServiceConfig for the Teams tool
+	// t.serviceConfig = ServiceConfig{
+	// 	Name:    "Teams",
+	// 	Command: "/Users/arturoaquino/Documents/code/llama.cpp/llama-server",
+	// 	Args:    args,
+	// }
 
 	if t.enabled {
 		// Initialize and start the ExternalService
@@ -589,7 +625,7 @@ func CreateToolByName(toolName string) (Tool, error) {
 		return &WebGetTool{}, nil
 	case "retrieval":
 		return &RetrievalTool{}, nil
-	case "teams": // Add this case for the "teams" tool
+	case "teams":
 		return &TeamsTool{}, nil
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
@@ -671,7 +707,7 @@ func GenerateEmbedding(text string) ([]float64, error) {
 
 // handleToolToggle handles the enabling or disabling of a tool.
 // It expects a JSON payload with the "enabled" field.
-func handleToolToggle(c echo.Context) error {
+func handleToolToggle(c echo.Context, config *Config) error {
 	// Extract the toolName from the URL parameter
 	toolName := c.Param("toolName")
 
@@ -712,7 +748,7 @@ func handleToolToggle(c echo.Context) error {
 	}
 
 	// Update the WorkflowManager based on the new status
-	UpdateWorkflowManagerForToolToggle(toolName, requestPayload.Enabled)
+	UpdateWorkflowManagerForToolToggle(toolName, requestPayload.Enabled, config)
 
 	// Respond with a success message
 	return c.JSON(http.StatusOK, map[string]string{
