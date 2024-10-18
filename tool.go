@@ -209,22 +209,18 @@ type WebSearchTool struct {
 
 // Process executes the web search tool logic.
 func (t *WebSearchTool) Process(ctx context.Context, input string) (string, error) {
-	params := t.GetParams()
-	log.Printf("WebSearchTool: Parameters: %v", params)
+	//params := t.GetParams()
+	//log.Printf("WebSearchTool: Parameters: %v", params)
 	// Print the search engine and endpoint for debugging
 	//log.Printf("Search Engine: %s, Endpoint: %s", t.SearchEngine, t.Endpoint)
 
 	// Perform search using GetSearXNGResults
-	urls := web.GetSearXNGResults(t.Endpoint, input)
+	urls := web.GetSearXNGResults("https://search.intelligence.dev", input)
+
+	urls = urls[:3]
 
 	if len(urls) == 0 {
 		return "", errors.New("no URLs found after filtering")
-	} else {
-		// Only return the topN URLs
-		if t.TopN > len(urls) {
-			t.TopN = len(urls)
-		}
-		urls = urls[:t.TopN]
 	}
 
 	// Print the URLs for debugging
@@ -236,59 +232,20 @@ func (t *WebSearchTool) Process(ctx context.Context, input string) (string, erro
 		err     error
 	}
 
-	resultsChan := make(chan result, t.TopN)
-	var wg sync.WaitGroup
-
-	// Semaphore to limit concurrency
-	semaphore := make(chan struct{}, t.Concurrency)
+	var aggregatedContent strings.Builder
 
 	for _, u := range urls {
-		wg.Add(1)
-		go func(url string) {
-			defer wg.Done()
-			semaphore <- struct{}{}        // Acquire semaphore
-			defer func() { <-semaphore }() // Release semaphore
+		log.Printf("Fetching URL: %s", u)
 
-			content, err := web.WebGetHandler(ctx, url)
-			if err != nil {
-				log.Printf("Failed to fetch content from URL %s: %v", url, err)
-				resultsChan <- result{content: "", err: err}
-				//return
-			}
+		content, err := web.WebGetHandler(u)
+		if err != nil {
+			log.Printf("Failed to fetch content from URL %s: %v", u, err)
+		}
 
-			// If the content does not start with 'I do not have access to real-time information, including news updates.', save it
-			if !strings.HasPrefix(content, "I do not have access to real-time information, including news updates.") {
-				err = SaveChatTurn(input, content, time.Now().Format(time.RFC3339))
-				if err != nil {
-					log.Printf("Failed to save web document: %v", err)
-				}
-			}
-
-			resultsChan <- result{content: content, err: nil}
-		}(u)
+		aggregatedContent.WriteString(content)
 	}
 
-	// Wait for all fetches to complete
-	go func() {
-		wg.Wait()
-		close(resultsChan)
-	}()
-
-	// var aggregatedContent strings.Builder
-
-	// for res := range resultsChan {
-	// 	if res.err == nil && res.content != "" {
-	// 		aggregatedContent.WriteString(res.content)
-	// 		aggregatedContent.WriteString("\n") // Separator between contents
-	// 	}
-	// }
-
-	// finalResult := aggregatedContent.String()
-	// if finalResult == "" {
-	// 	return input, errors.New("no tools processed the input or no result generated")
-	// }
-
-	return "", nil
+	return aggregatedContent.String(), nil
 }
 
 // Enabled returns the enabled status of the tool.
@@ -357,7 +314,7 @@ func (t *WebGetTool) Process(ctx context.Context, input string) (string, error) 
 	var aggregatedContent strings.Builder
 	for _, u := range urls {
 		// Fetch and process content using internal/web's WebGetHandler function
-		content, err := web.WebGetHandler(ctx, u)
+		content, err := web.WebGetHandler(u)
 		if err != nil {
 			log.Printf("Failed to fetch content from URL %s: %v", u, err)
 			continue
@@ -476,7 +433,8 @@ func (t *TeamsTool) Process(ctx context.Context, input string) (string, error) {
 	userPrompt := input[strings.Index(input, "{")+1 : strings.LastIndex(input, "}")]
 
 	//ins := fmt.Sprintf("Prompt: %s - How can the previous prompt be enhanced with better instructions? Respond with the enhanced prompt only. Do not attempt to answer the prompt. Never output code.", userPrompt)
-	ins := fmt.Sprintf("Prompt: %s - Given the previous text, output a list of questions we should answer in order to respond accurately. Never output questions that do not serve to respod to the prompt. Stick to the topic and the topic only. Do not provide an answer to the Prompt. Only the set of questions.", userPrompt)
+	// ins := fmt.Sprintf("Prompt: %s - Given the previous text, output a list of questions we should answer in order to respond accurately. Never output questions that do not serve to respod to the prompt. Stick to the topic and the topic only. Do not provide an answer to the Prompt. Only the set of questions.", userPrompt)
+	ins := fmt.Sprintf("Prompt: %s - Rewrite the previous information as a list of three search engine queries. Return the list of queries only.", userPrompt)
 	cpt := GetSystemTemplate("", ins)
 
 	// Create a new LLM Client

@@ -27,7 +27,69 @@ const (
 	TS       Language = "TS"
 	MARKDOWN Language = "MARKDOWN"
 	JSON     Language = "JSON"
+	DEFAULT  Language = "DEFAULT"
 )
+
+// SplitTextByCount splits the given text into chunks of the given size.
+func SplitTextByCount(text string, size int) []string {
+	// Slice the string into chunks of the specified size
+	var chunks []string
+	for i := 0; i < len(text); i += size {
+		end := i + size
+		if end > len(text) {
+			end = len(text)
+		}
+		chunks = append(chunks, text[i:end])
+	}
+	return chunks
+}
+
+// SplitText splits the given text using a simple chunk-based approach if the language is not specifically defined.
+func (r *RecursiveCharacterTextSplitter) SplitText(text string) []string {
+	// Use a simple character count-based splitting mechanism
+	return SplitTextByCount(text, r.ChunkSize)
+}
+
+// FromLanguage creates a RecursiveCharacterTextSplitter based on the given language.
+// If the language is not a special case, it will default to simple chunk-based splitting.
+func FromLanguage(language Language) (*RecursiveCharacterTextSplitter, error) {
+	// If language is not DEFAULT, create a RecursiveCharacterTextSplitter with specific settings
+	if language != DEFAULT {
+		separators, err := GetSeparatorsForLanguage(language)
+		if err != nil {
+			return nil, err
+		}
+		return &RecursiveCharacterTextSplitter{
+			Separators:       separators,
+			IsSeparatorRegex: true,
+		}, nil
+	}
+
+	// Fallback: for general text, create a simpler splitter that uses chunk sizes.
+	return &RecursiveCharacterTextSplitter{
+		ChunkSize: 1000, // Default chunk size
+	}, nil
+}
+
+// GetSeparatorsForLanguage returns the separators for the given language.
+func GetSeparatorsForLanguage(language Language) ([]string, error) {
+	switch language {
+	case PYTHON:
+		return []string{"\nclass ", "\ndef ", "\n\n", "\n", " ", ""}, nil
+	case GO:
+		return []string{"\nfunc ", "\nvar ", "\nif ", "\n\n", "\n", " ", ""}, nil
+	case HTML:
+		return []string{"<div", "<p", "<h1", "<br", "<table", "", "\n"}, nil
+	case JS, TS:
+		return []string{"\nfunction ", "\nconst ", "\nlet ", "\nclass ", "\n\n", "\n", " ", ""}, nil
+	case MARKDOWN:
+		return []string{"\n#{1,6} ", "\n---+\n", "\n", " ", ""}, nil
+	case JSON:
+		return []string{"}\n", ""}, nil
+	default:
+		return nil, errors.New("unsupported language")
+	}
+}
 
 // escapeString is a helper function that escapes special characters in a string.
 func escapeString(s string) string {
@@ -52,42 +114,46 @@ func splitTextWithRegex(text string, separator string, keepSeparator bool) []str
 	return splits
 }
 
-// SplitTextByCount splits the given text into chunks of the given size.
-func SplitTextByCount(text string, size int) []string {
-	// slice the string into chunks of size
-	var chunks []string
-	for i := 0; i < len(text); i += size {
-		end := i + size
-		if end > len(text) {
-			end = len(text)
+// Enforce chunk size strictly by splitting each chunk further if needed.
+func (r *RecursiveCharacterTextSplitter) enforceChunkSize(chunks []string) []string {
+	var result []string
+	for _, chunk := range chunks {
+		if len(chunk) > r.ChunkSize {
+			// Split the chunk into smaller pieces of size `ChunkSize`
+			subChunks := SplitTextByCount(chunk, r.ChunkSize)
+			result = append(result, subChunks...)
+		} else {
+			result = append(result, chunk)
 		}
-		chunks = append(chunks, text[i:end])
 	}
-	return chunks
+	return result
 }
 
-// SplitText splits the given text using the configured separators.
-func (r *RecursiveCharacterTextSplitter) SplitText(text string) []string {
-	chunks := r.splitTextHelper(text, r.Separators)
+// Apply overlap to the chunks.
+func (r *RecursiveCharacterTextSplitter) applyOverlap(chunks []string) []string {
+	overlappedChunks := make([]string, 0)
+	for i := 0; i < len(chunks)-1; i++ {
+		currentChunk := chunks[i]
+		nextChunk := chunks[i+1]
 
-	// Apply chunk overlap
-	if r.OverlapSize > 0 {
-		overlappedChunks := make([]string, 0)
-		for i := 0; i < len(chunks)-1; i++ {
-			currentChunk := chunks[i]
-			nextChunk := chunks[i+1]
-
-			nextChunkOverlap := nextChunk[:min(len(nextChunk), r.OverlapSize)]
-
-			overlappedChunk := currentChunk + nextChunkOverlap
-			overlappedChunks = append(overlappedChunks, overlappedChunk)
+		// Ensure overlap does not go out of range
+		overlapLength := min(len(nextChunk), r.OverlapSize)
+		if overlapLength > len(nextChunk) {
+			overlapLength = len(nextChunk)
 		}
-		overlappedChunks = append(overlappedChunks, chunks[len(chunks)-1])
 
-		chunks = overlappedChunks
+		nextChunkOverlap := nextChunk[:overlapLength]
+
+		overlappedChunk := currentChunk + nextChunkOverlap
+		overlappedChunks = append(overlappedChunks, overlappedChunk)
 	}
 
-	return chunks
+	// Add the last chunk without any overlap
+	if len(chunks) > 0 {
+		overlappedChunks = append(overlappedChunks, chunks[len(chunks)-1])
+	}
+
+	return overlappedChunks
 }
 
 // splitTextHelper is a recursive helper function that splits text using the given separators.
@@ -131,160 +197,6 @@ func (r *RecursiveCharacterTextSplitter) splitTextHelper(text string, separators
 	}
 
 	return finalChunks
-}
-
-// FromLanguage creates a RecursiveCharacterTextSplitter based on the given language.
-func FromLanguage(language Language) (*RecursiveCharacterTextSplitter, error) {
-	separators, err := GetSeparatorsForLanguage(language)
-	if err != nil {
-		return nil, err
-	}
-	return &RecursiveCharacterTextSplitter{
-		Separators:       separators,
-		IsSeparatorRegex: true,
-	}, nil
-}
-
-// GetSeparatorsForLanguage returns the separators for the given language.
-func GetSeparatorsForLanguage(language Language) ([]string, error) {
-	switch language {
-	case PYTHON:
-		return []string{
-			// Split along class definitions
-			"\nclass ",
-			"\ndef ",
-			"\n\tdef ",
-			// Split by the normal type of lines
-			"\n\n",
-			"\n",
-			" ",
-			"",
-		}, nil
-	case GO:
-		return []string{
-			// Split along function definitions
-			"\nfunc ",
-			"\nvar ",
-			"\nconst ",
-			"\ntype ",
-			// Split along control flow statements
-			"\nif ",
-			"\nfor ",
-			"\nswitch ",
-			"\ncase ",
-			// Split by the normal type of lines
-			"\n\n",
-			"\n",
-			" ",
-			"",
-		}, nil
-	case HTML:
-		return []string{
-			// Split along HTML tags
-			"<body",
-			"<div",
-			"<p",
-			"<br",
-			"<li",
-			"<h1",
-			"<h2",
-			"<h3",
-			"<h4",
-			"<h5",
-			"<h6",
-			"<span",
-			"<table",
-			"<tr",
-			"<td",
-			"<th",
-			"<ul",
-			"<ol",
-			"<header",
-			"<footer",
-			"<nav",
-			// Head
-			"<head",
-			"<style",
-			"<script",
-			"<meta",
-			"<title",
-			"",
-			"\n</",
-		}, nil
-	case JS:
-		return []string{
-			// Split along function definitions
-			"\nfunction ",
-			"\nconst ",
-			"\nlet ",
-			"\nvar ",
-			"\nclass ",
-			// Split along control flow statements
-			"\nif ",
-			"\nfor ",
-			"\nwhile ",
-			"\nswitch ",
-			"\ncase ",
-			"\ndefault ",
-			// Split by the normal type of lines
-			"\n\n",
-			"\n",
-			" ",
-			"",
-		}, nil
-	case TS:
-		return []string{
-			"\nenum ",
-			"\ninterface ",
-			"\nnamespace ",
-			"\ntype ",
-			// Split along class definitions
-			"\nclass ",
-			// Split along function definitions
-			"\nfunction ",
-			"\nconst ",
-			"\nlet ",
-			"\nvar ",
-			// Split along control flow statements
-			"\nif ",
-			"\nfor ",
-			"\nwhile ",
-			"\nswitch ",
-			"\ncase ",
-			"\ndefault ",
-			// Split by the normal type of lines
-			"\n\n",
-			"\n",
-			" ",
-			"",
-		}, nil
-	case MARKDOWN:
-		return []string{
-			// First, try to split along Markdown headings (starting with level 2)
-			"\n#{1,6} ",
-			// Note the alternative syntax for headings (below) is not handled here
-			// Heading level 2
-			// ---------------
-			// End of code block
-			"```\n",
-			// Horizontal lines
-			"\n\\*\\*\\*+\n",
-			"\n---+\n",
-			"\n___+\n",
-			// Note that this splitter doesn't handle horizontal lines defined
-			// by *three or more* of ***, ---, or ___, but this is not handled
-			"\n\n",
-			"\n",
-			" ",
-			"",
-		}, nil
-	case JSON:
-		return []string{
-			"}\n",
-		}, nil
-	default:
-		return nil, errors.New("unsupported language")
-	}
 }
 
 // Helper functions

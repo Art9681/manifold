@@ -1,5 +1,3 @@
-// internal/web/web.go
-
 package web
 
 import (
@@ -10,142 +8,108 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
-	"regexp"
 	"strings"
-	"sync"
 	"time"
 
+	"os"
+	"regexp"
+
 	"github.com/PuerkitoBio/goquery"
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 	"github.com/go-shiori/go-readability"
+	"github.com/pterm/pterm"
+	"golang.org/x/net/html"
 )
 
-// List of unwanted URLs to filter out from search results
-var unwantedURLs = []string{
-	"search.intelligence.dev",
-	"web.archive.org",
-	"www.youtube.com",
-	"www.youtube.com/watch",
-	"www.wired.com",
-	"www.techcrunch.com",
-	"www.wsj.com",
-	"www.cnn.com",
-	"www.nytimes.com",
-	"www.forbes.com",
-	"www.businessinsider.com",
-	"www.theverge.com",
-	"www.thehill.com",
-	"www.theatlantic.com",
-	"www.foxnews.com",
-	"www.theguardian.com",
-	"www.nbcnews.com",
-	"www.msn.com",
-	"www.sciencedaily.com",
-	"reuters.com",
-	"bbc.com",
-	"thenewstack.io",
-	"abcnews.go.com",
-	"apnews.com",
-	"bloomberg.com",
-	"polygon.com",
-	"reddit.com",
-	"indeed.com",
-	"test.com",
-	// Add more URLs to block from search results
-}
-
-var resultURLs []string
-
-// ChromePool manages a pool of Chrome contexts for concurrent fetching.
-type ChromePool struct {
-	pool chan context.Context
-	mu   sync.Mutex
-}
-
-// Get retrieves a Chrome context from the pool.
-func (p *ChromePool) Get() context.Context {
-	return <-p.pool
-}
-
-// Put returns a Chrome context back to the pool.
-func (p *ChromePool) Put(ctx context.Context) {
-	p.pool <- ctx
-}
-
-// Global ChromePool instance (adjust pool size as needed)
-var chromePool *ChromePool
-
-// NewChromePool creates a new ChromePool with the given size.
-func NewChromePool(size int) (*ChromePool, error) {
-	pool := make(chan context.Context, size)
-	for i := 0; i < size; i++ {
-		allocatorCtx, cancel := chromedp.NewExecAllocator(context.Background(), chromedp.Flag("headless", true))
-		ctx, cancel := chromedp.NewContext(allocatorCtx, chromedp.WithLogf(log.Printf))
-		pool <- ctx
-		cancel()
+var (
+	unwantedURLs = []string{
+		"web.archive.org",
+		"www.youtube.com",
+		"www.youtube.com/watch",
+		"www.wired.com",
+		"www.techcrunch.com",
+		"www.wsj.com",
+		"www.nytimes.com",
+		"www.forbes.com",
+		"www.businessinsider.com",
+		"www.theverge.com",
+		"www.thehill.com",
+		"www.theatlantic.com",
+		"www.foxnews.com",
+		"www.theguardian.com",
+		"www.nbcnews.com",
+		"www.msn.com",
+		"www.sciencedaily.com",
+		"reuters.com",
+		"bbc.com",
+		"thenewstack.io",
+		"abcnews.go.com",
+		"apnews.com",
+		"bloomberg.com",
+		"polygon.com",
+		"reddit.com",
+		"indeed.com",
+		"test.com",
+		// Add more URLs to block from search results
 	}
-	return &ChromePool{pool: pool}, nil
-}
 
-func init() {
-	var err error
-	chromePool, err = NewChromePool(5) // Pool size of 5
-	if err != nil {
-		log.Fatalf("Failed to create Chrome pool: %v", err)
-	}
-}
+	resultURLs []string
+)
 
 // CheckRobotsTxt checks if the target website allows scraping by "et-bot".
-func CheckRobotsTxt(ctx context.Context, u string) bool {
+func checkRobotsTxt(ctx context.Context, u string) bool {
 	baseURL, err := url.Parse(u)
 	if err != nil {
 		log.Printf("Failed to parse baseURL: %v", err)
 		return false
 	}
 
-	robotsURL := url.URL{Scheme: baseURL.Scheme, Host: baseURL.Host, Path: "/robots.txt"}
-	resp, err := http.Get(robotsURL.String())
+	robotsUrl := url.URL{Scheme: baseURL.Scheme, Host: baseURL.Host, Path: "/robots.txt"}
+	resp, err := http.Get(robotsUrl.String())
 	if err != nil {
 		log.Printf("Failed to fetch robots.txt for %s: %v", baseURL.String(), err)
 		return false
 	}
 	defer resp.Body.Close()
 
-	// Check the response status
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("robots.txt not found for %s. Assuming scraping is allowed.", baseURL.String())
+	// Check if the status code is 200
+	if resp.StatusCode != 200 {
+		log.Printf("Failed to fetch robots.txt for %s: %v", baseURL.String(), err)
+
+		// We assume its allowed if not found
 		return true
 	}
 
-	// TODO: Parse robots.txt content to check for disallowed paths for "et-bot"
-	// Currently, we assume it's allowed
-	log.Printf("robots.txt found for %s. Assuming scraping is allowed.", baseURL.String())
+	// Parse the robots.txt content if needed
+	// Print the URL and the content of the robots.txt
+	log.Printf("URL: %s\n", robotsUrl.String())
 	return true
 }
 
-// WebGetHandler fetches and processes the content of a web page.
-func WebGetHandler(parentCtx context.Context, address string) (string, error) {
-	if !CheckRobotsTxt(parentCtx, address) {
+func WebGetHandler(address string) (string, error) {
+	if !checkRobotsTxt(context.Background(), address) {
 		return "", errors.New("scraping not allowed according to robots.txt")
 	}
 
-	// Get a fresh Chrome context from the pool
-	ctx := chromePool.Get()
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+	)
 
-	// Reset the Chrome context to ensure it's not prematurely canceled
-	allocatorCtx, cancel := chromedp.NewExecAllocator(context.Background(), chromedp.Flag("headless", true))
-	defer cancel()
-	ctx, cancel = chromedp.NewContext(allocatorCtx, chromedp.WithLogf(log.Printf))
+	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	defer cancel()
 
-	// Apply a new timeout to the fresh context
-	ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
+	ctx, cancel := chromedp.NewContext(allocCtx)
+	defer cancel()
+
+	ctx, cancel = context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
 	var docs string
 	err := chromedp.Run(ctx,
+		chromedp.Navigate(address),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			headers := map[string]interface{}{
 				"User-Agent":      "et-bot", // Set user agent to et-bot
@@ -158,9 +122,8 @@ func WebGetHandler(parentCtx context.Context, address string) (string, error) {
 			}
 			return network.SetExtraHTTPHeaders(network.Headers(headers)).Do(ctx)
 		}),
-		chromedp.Navigate(address),
-		chromedp.WaitReady("body", chromedp.ByQuery),
-		chromedp.OuterHTML("html", &docs, chromedp.ByQuery),
+		chromedp.WaitReady("body"),
+		chromedp.OuterHTML("html", &docs),
 	)
 
 	if err != nil {
@@ -168,20 +131,19 @@ func WebGetHandler(parentCtx context.Context, address string) (string, error) {
 		return "", err
 	}
 
-	// Parse the HTML content using readability
-	getURL, err := url.Parse(address)
+	// Convert url to url.URL
+	getUrl, err := url.Parse(address)
 	if err != nil {
 		log.Println("Error parsing URL:", err)
 		return "", err
 	}
 
-	article, err := readability.FromReader(strings.NewReader(docs), getURL)
+	article, err := readability.FromReader(strings.NewReader(docs), getUrl)
 	if err != nil {
 		log.Println("Error parsing reader view:", err)
 		return "", err
 	}
 
-	// Use goquery to extract text
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(article.Content))
 	if err != nil {
 		log.Println("Error parsing document:", err)
@@ -189,60 +151,154 @@ func WebGetHandler(parentCtx context.Context, address string) (string, error) {
 	}
 
 	text := doc.Find("body").Text()
-	text = RemoveEmptyRows(text)
 
-	// Return the context to the pool after processing
-	chromePool.Put(ctx)
+	text = removeEmptyRows(text)
+
+	//pterm.Info.Println("Document:", text)
 
 	return text, nil
 }
 
-// ExtractURLs extracts URLs from a given input string using regex.
 func ExtractURLs(input string) []string {
-	urlRegex := `http[s]?://[^\s<>{}|\\^` + "`" + `"]+`
+	urlRegex := `http.*?://[^\s<>{}|\\^` + "`" + `"]+`
 	re := regexp.MustCompile(urlRegex)
 
 	matches := re.FindAllString(input, -1)
 
 	var cleanedURLs []string
 	for _, match := range matches {
-		cleanedURL := CleanURL(match)
+		cleanedURL := cleanURL(match)
 		cleanedURLs = append(cleanedURLs, cleanedURL)
 	}
 
 	return cleanedURLs
 }
 
-// CleanURL removes illegal trailing characters from a URL.
-func CleanURL(urlStr string) string {
-	illegalTrailingChars := []rune{'.', ',', ';', '!', '?'}
+func RemoveUrl(input []string) []string {
+	urlRegex := `http.*?://[^\s<>{}|\\^` + "`" + `"]+`
+	re := regexp.MustCompile(urlRegex)
 
-	for len(urlStr) > 0 {
-		trimmed := false
-		for _, char := range illegalTrailingChars {
-			if urlStr[len(urlStr)-1] == byte(char) {
-				urlStr = urlStr[:len(urlStr)-1]
-				trimmed = true
-			}
-		}
-		if !trimmed {
-			break
+	for i, str := range input {
+		matches := re.FindAllString(str, -1)
+		for _, match := range matches {
+			input[i] = strings.ReplaceAll(input[i], match, "")
 		}
 	}
 
-	return urlStr
+	return input
 }
 
-// RemoveUnwantedURLs filters out URLs that match unwanted patterns.
+func cleanURL(url string) string {
+	illegalTrailingChars := []rune{'.', ',', ';', '!', '?'}
+
+	for _, char := range illegalTrailingChars {
+		if url[len(url)-1] == byte(char) {
+			url = url[:len(url)-1]
+		}
+	}
+
+	return url
+}
+
+func SearchDDG(query string) []string {
+	resultURLs = nil
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+	)
+	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancel()
+	ctx, cancel := chromedp.NewContext(allocCtx)
+	defer cancel()
+
+	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	var nodes []*cdp.Node
+
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(`https://lite.duckduckgo.com/lite/`),
+		chromedp.WaitVisible(`input[name="q"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="q"]`, query+kb.Enter, chromedp.ByQuery),
+		chromedp.Sleep(5*time.Second),
+		chromedp.WaitVisible(`input[name="q"]`, chromedp.ByQuery),
+		chromedp.Nodes(`a`, &nodes, chromedp.ByQueryAll),
+	)
+	if err != nil {
+		log.Printf("Error during search: %v", err)
+		return nil
+	}
+
+	err = chromedp.Run(ctx,
+		chromedp.ActionFunc(func(c context.Context) error {
+			re, err := regexp.Compile(`^http[s]?://`)
+			if err != nil {
+				return err
+			}
+
+			uniqueUrls := make(map[string]bool)
+			for _, n := range nodes {
+				for _, attr := range n.Attributes {
+					if re.MatchString(attr) && !strings.Contains(attr, "duckduckgo") {
+						uniqueUrls[attr] = true
+					}
+				}
+			}
+
+			for u := range uniqueUrls {
+				resultURLs = append(resultURLs, u)
+			}
+
+			return nil
+		}),
+	)
+
+	if err != nil {
+		log.Printf("Error processing results: %v", err)
+		return nil
+	}
+
+	resultURLs = RemoveUnwantedURLs(resultURLs)
+
+	// If resultURLs is contains cnn.com, replace the URL with https://lite.cnn.com
+	for i, u := range resultURLs {
+		if strings.Contains(u, "https://www.cnn.com") {
+			resultURLs[i] = strings.Replace(u, "https://www.cnn.com", "https://lite.cnn.com", 1)
+		}
+	}
+
+	pterm.Info.Println("Search results:", resultURLs)
+
+	return resultURLs
+}
+
+func GetSearchResults(urls []string) string {
+	var resultHTML string
+
+	for _, url := range urls {
+		res, err := WebGetHandler(url)
+		if err != nil {
+			pterm.Error.Printf("Error getting search result: %v", err)
+			continue
+		}
+
+		if res != "" {
+			resultHTML += res
+		}
+	}
+
+	return resultHTML
+}
+
 func RemoveUnwantedURLs(urls []string) []string {
 	var filteredURLs []string
 	for _, u := range urls {
-		log.Printf("Checking URL: %s", u)
+		pterm.Info.Printf("Checking URL: %s", u)
 
 		unwanted := false
 		for _, unwantedURL := range unwantedURLs {
 			if strings.Contains(u, unwantedURL) {
-				log.Printf("URL %s contains unwanted URL %s", u, unwantedURL)
+				pterm.Info.Printf("URL %s contains unwanted URL %s", u, unwantedURL)
 				unwanted = true
 				break
 			}
@@ -252,107 +308,15 @@ func RemoveUnwantedURLs(urls []string) []string {
 		}
 	}
 
-	log.Printf("Filtered URLs: %v", filteredURLs)
+	pterm.Info.Printf("Filtered URLs: %v", filteredURLs)
 
 	return filteredURLs
 }
 
-// GetSearXNGResults performs a search and retrieves the result URLs.
-func GetSearXNGResults(endpoint string, query string) []string {
-	htmlContent, err := PostRequest(endpoint, query)
-	if err != nil {
-		log.Printf("Error performing request: %v\n", err)
-		return nil
-	}
+func GetPageScreen(chromeUrl string, pageAddress string) string {
+	instanceUrl := chromeUrl
 
-	urls := ExtractURLs(htmlContent)
-
-	// Remove unwanted URLs
-	urls = RemoveUnwantedURLs(urls)
-
-	return urls
-}
-
-// PostRequest sends a POST request to the given endpoint with a named parameter 'q' and returns the response body as a string.
-func PostRequest(endpoint string, queryParam string) (string, error) {
-	// Create the form data
-	formData := url.Values{}
-	formData.Set("q", queryParam)
-
-	// Convert form data to a byte buffer
-	data := strings.NewReader(formData.Encode())
-
-	// Create a new POST request
-	req, err := http.NewRequest("POST", endpoint, data)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set the appropriate headers
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	// Perform the request
-	client := &http.Client{
-		Timeout: 15 * time.Second,
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to perform request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Check the response status
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	// Read the response body using bytes.Buffer
-	var buf bytes.Buffer
-	_, err = buf.ReadFrom(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	return buf.String(), nil
-}
-
-// GetSearchResults fetches content from a list of URLs.
-func GetSearchResults(urls []string) string {
-	var resultHTML strings.Builder
-
-	for _, url := range urls {
-		res, err := WebGetHandler(context.Background(), url)
-		if err != nil {
-			log.Printf("Error getting search result: %v", err)
-			continue
-		}
-
-		if res != "" {
-			resultHTML.WriteString(res)
-			resultHTML.WriteString("\n")
-		}
-	}
-
-	return resultHTML.String()
-}
-
-// RemoveEmptyRows removes empty lines from the input string.
-func RemoveEmptyRows(input string) string {
-	lines := strings.Split(input, "\n")
-	var filteredLines []string
-
-	for _, line := range lines {
-		if strings.TrimSpace(line) != "" {
-			filteredLines = append(filteredLines, line)
-		}
-	}
-
-	return strings.Join(filteredLines, "\n")
-}
-
-// GetPageScreen captures a screenshot of the given page.
-func GetPageScreen(chromeURL string, pageAddress string) string {
-	allocatorCtx, cancel := chromedp.NewExecAllocator(context.Background(), chromedp.Flag("headless", true))
+	allocatorCtx, cancel := chromedp.NewRemoteAllocator(context.Background(), instanceUrl)
 	defer cancel()
 
 	ctx, cancel := chromedp.NewContext(allocatorCtx, chromedp.WithLogf(log.Printf))
@@ -384,4 +348,119 @@ func GetPageScreen(chromeURL string, pageAddress string) string {
 	}
 
 	return filename
+}
+
+func RemoveUrls(input string) string {
+	urlRegex := `http.*?://[^\s<>{}|\\^` + "`" + `"]+`
+	re := regexp.MustCompile(urlRegex)
+
+	matches := re.FindAllString(input, -1)
+
+	for _, match := range matches {
+		input = strings.ReplaceAll(input, match, "")
+	}
+
+	return input
+}
+
+func removeEmptyRows(input string) string {
+	lines := strings.Split(input, "\n")
+	var filteredLines []string
+
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			filteredLines = append(filteredLines, line)
+		}
+	}
+
+	return strings.Join(filteredLines, "\n")
+}
+
+// postRequest sends a POST request to the given endpoint with a named parameter 'q' and returns the response body as a string.
+func postRequest(endpoint string, queryParam string) (string, error) {
+	// Create the form data
+	formData := url.Values{}
+	formData.Set("q", queryParam)
+
+	// Convert form data to a byte buffer
+	data := bytes.NewBufferString(formData.Encode())
+
+	// Create a new POST request
+	req, err := http.NewRequest("POST", endpoint, data)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set the appropriate headers
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	// Perform the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to perform request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check the response status
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	// Read the response body
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(resp.Body)
+
+	return buf.String(), nil
+}
+
+// extractURLs parses the HTML response and extracts the URLs from the search results.
+func extractURLs(htmlContent string) ([]string, error) {
+	doc, err := html.Parse(strings.NewReader(htmlContent))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse HTML: %w", err)
+	}
+
+	var urls []string
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "a" {
+			for _, attr := range n.Attr {
+				if attr.Key == "href" && strings.Contains(attr.Val, "http") {
+					urls = append(urls, attr.Val)
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+	}
+	f(doc)
+
+	return urls, nil
+}
+
+func GetSearXNGResults(endpoint string, query string) []string {
+	htmlContent, err := postRequest(endpoint, query)
+	if err != nil {
+		pterm.Error.Printf("Error: %v\n", err)
+		return nil
+	}
+
+	urls, err := extractURLs(htmlContent)
+	if err != nil {
+		pterm.Error.Printf("Error extracting URLs: %v\n", err)
+		return nil
+	}
+
+	// Remove unwanted URLs
+	urls = RemoveUnwantedURLs(urls)
+
+	for i, u := range resultURLs {
+		if strings.Contains(u, "https://www.cnn.com") {
+			resultURLs[i] = strings.Replace(u, "https://www.cnn.com", "https://lite.cnn.com", 1)
+		}
+	}
+
+	return urls
 }

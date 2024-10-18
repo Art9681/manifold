@@ -30,21 +30,45 @@ Provides a tool for loading documents from a Git repository, including functiona
 package main
 
 import (
-    "fmt"
-    "path/to/gitloader"
+	"fmt"
+
+	"your_module_path/internal/documents"
 )
 
 func main() {
-    loader := gitloader.NewGitLoader("/path/to/local/repo", "git@github.com:user/repo.git", "main", "/path/to/private/key", nil, false)
-    documents, err := loader.Load()
-    if err != nil {
-        fmt.Println("Error loading documents:", err)
-        return
-    }
+	// Create a new DocumentManager with desired chunk and overlap sizes
+	dm := documents.NewDocumentManager(1000, 200)
 
-    for _, doc := range documents {
-        fmt.Println(doc.Metadata["file_name"], doc.PageContent)
-    }
+	// Ingest documents from a Git repository
+	gitLoader := documents.NewGitLoader("/path/to/repo", "git@github.com:user/repo.git", "main", "/path/to/private/key", nil, false)
+	gitDocs, err := gitLoader.Load()
+	if err != nil {
+		fmt.Println("Error loading Git documents:", err)
+		return
+	}
+	dm.IngestDocuments(gitDocs)
+
+	// Ingest a PDF document
+	pdfDoc, err := documents.LoadPDF("/path/to/document.pdf")
+	if err != nil {
+		fmt.Println("Error loading PDF document:", err)
+		return
+	}
+	dm.IngestDocument(pdfDoc)
+
+	// Split the documents based on language-specific separators
+	splits, err := dm.SplitDocuments()
+	if err != nil {
+		fmt.Println("Error splitting documents:", err)
+		return
+	}
+
+	// Process the splits as needed
+	for doc, chunks := range splits {
+		fmt.Printf("Document: %s\n", doc.Metadata["file_name"])
+		for i, chunk := range chunks {
+			fmt.Printf("Chunk %d: %s\n", i+1, chunk)
+		}
+	}
 }
-
 ```

@@ -2,11 +2,33 @@ package documents
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/ledongthuc/pdf"
 )
+
+// LoadPDF loads a PDF file and returns a Document.
+func LoadPDF(filePath string) (Document, error) {
+	content, err := GetPdfContents(filePath)
+	if err != nil {
+		return Document{}, err
+	}
+
+	metadata := map[string]string{
+		"source":    filePath,
+		"file_path": filePath,
+		"file_name": filepath.Base(filePath),
+		"file_type": filepath.Ext(filePath),
+		"language":  string(MARKDOWN), // Assuming PDFs are converted to Markdown
+	}
+
+	return Document{
+		PageContent: content,
+		Metadata:    metadata,
+	}, nil
+}
 
 // GetPdfContents extracts the text content from the given PDF file and returns it as Markdown
 func GetPdfContents(filePath string) (string, error) {

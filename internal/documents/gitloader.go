@@ -1,23 +1,14 @@
-// internal/documents/gitloader.go - Package documents provides functionality to load documents from a Git repository.
-
 package documents
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
 	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	golangssh "golang.org/x/crypto/ssh"
 )
-
-type Document struct {
-	PageContent string
-	Metadata    map[string]string
-}
 
 type GitLoader struct {
 	RepoPath           string
@@ -26,57 +17,60 @@ type GitLoader struct {
 	PrivateKeyPath     string
 	FileFilter         func(string) bool
 	InsecureSkipVerify bool
+	DocumentManager    *DocumentManager
+	IndexManager       *IndexManager
 }
 
-func NewGitLoader(repoPath, cloneURL, branch, privateKeyPath string, fileFilter func(string) bool, insecureSkipVerify bool) *GitLoader {
-	return &GitLoader{RepoPath: repoPath, CloneURL: cloneURL, Branch: branch, PrivateKeyPath: privateKeyPath, FileFilter: fileFilter, InsecureSkipVerify: insecureSkipVerify}
+func NewGitLoader(repoPath, cloneURL, branch, privateKeyPath string, fileFilter func(string) bool, insecureSkipVerify bool, dm *DocumentManager, im *IndexManager) *GitLoader {
+	return &GitLoader{
+		RepoPath:           repoPath,
+		CloneURL:           cloneURL,
+		Branch:             branch,
+		PrivateKeyPath:     privateKeyPath,
+		FileFilter:         fileFilter,
+		InsecureSkipVerify: insecureSkipVerify,
+		DocumentManager:    dm,
+		IndexManager:       im,
+	}
 }
 
 // Load loads the documents from the Git repository specified by the GitLoader.
-// It returns a slice of Document and an error if any.
-// If the repository does not exist at the specified path and a clone URL is provided,
-// it clones the repository using the provided authentication options.
-// If the repository already exists, it opens the repository at the specified path.
-// If a branch is specified, it checks out the branch.
-// It then walks through the repository files, reads the content of each file,
-// and creates a Document object for each file with the corresponding metadata.
-// The resulting documents are returned as a slice.
-// If any error occurs during the process, it is returned.
-func (gl *GitLoader) Load() ([]Document, error) {
-	var repo *gogit.Repository
+func (gl *GitLoader) Load() error {
 	var err error
 
+	// Clone or open the repository
 	if _, err = os.Stat(gl.RepoPath); os.IsNotExist(err) && gl.CloneURL != "" {
-		sshKey, _ := os.ReadFile(gl.PrivateKeyPath)
-		signer, _ := golangssh.ParsePrivateKey(sshKey)
-		auth := &gitssh.PublicKeys{User: "git", Signer: signer}
-		if gl.InsecureSkipVerify {
-			auth.HostKeyCallback = golangssh.InsecureIgnoreHostKey()
+		var auth *gitssh.PublicKeys
+		// Only set up SSH authentication if PrivateKeyPath is provided
+		if gl.PrivateKeyPath != "" {
+			sshKey, _ := os.ReadFile(gl.PrivateKeyPath)
+			signer, _ := golangssh.ParsePrivateKey(sshKey)
+			auth = &gitssh.PublicKeys{User: "git", Signer: signer}
+			if gl.InsecureSkipVerify {
+				auth.HostKeyCallback = golangssh.InsecureIgnoreHostKey()
+			}
 		}
-		repo, err = gogit.PlainClone(gl.RepoPath, false, &gogit.CloneOptions{URL: gl.CloneURL, Auth: auth})
+
+		// Clone the repository; omit the Auth field if auth is nil
+		cloneOptions := &gogit.CloneOptions{
+			URL: gl.CloneURL,
+		}
+		if auth != nil {
+			cloneOptions.Auth = auth
+		}
+
+		_, err = gogit.PlainClone(gl.RepoPath, false, cloneOptions)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	} else {
-		repo, err = gogit.PlainOpen(gl.RepoPath)
+		_, err = gogit.PlainOpen(gl.RepoPath)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	if gl.Branch != "" {
-		w, err := repo.Worktree()
-		if err != nil {
-			return nil, err
-		}
-		err = w.Checkout(&gogit.CheckoutOptions{Branch: plumbing.NewBranchReferenceName(gl.Branch)})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var docs []Document
-
+	// Walk through the files in the repository and ingest them into DocumentManager
 	err = filepath.Walk(gl.RepoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -86,11 +80,17 @@ func (gl *GitLoader) Load() ([]Document, error) {
 			return nil
 		}
 
+		// Filter out non-text files based on file extension
+		if !isTextFile(info.Name()) {
+			return nil
+		}
+
 		if gl.FileFilter != nil && !gl.FileFilter(path) {
 			return nil
 		}
 
-		content, err := ioutil.ReadFile(path)
+		// Read file content
+		content, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -99,6 +99,7 @@ func (gl *GitLoader) Load() ([]Document, error) {
 		relFilePath, _ := filepath.Rel(gl.RepoPath, path)
 		fileType := filepath.Ext(info.Name())
 
+		// Construct metadata
 		metadata := map[string]string{
 			"source":    relFilePath,
 			"file_path": relFilePath,
@@ -106,15 +107,48 @@ func (gl *GitLoader) Load() ([]Document, error) {
 			"file_type": fileType,
 		}
 
+		// Use DocumentManager's method to determine the language
+		language, err := getLanguageFromMetadata(metadata)
+		if err == nil {
+			metadata["language"] = string(language)
+		}
+
+		// Create Document and ingest it into DocumentManager
 		doc := Document{PageContent: textContent, Metadata: metadata}
-		docs = append(docs, doc)
+		gl.DocumentManager.IngestDocument(doc)
+
+		// Index the full document content before splitting
+		docID := metadata["file_path"]
+		if err := gl.IndexManager.IndexFullDocument(docID, textContent, relFilePath); err != nil {
+			return fmt.Errorf("failed to index full document %s: %w", docID, err)
+		}
 
 		return nil
 	})
 
 	if err != nil {
 		fmt.Printf("Error reading files: %s\n", err)
+		return err
 	}
 
-	return docs, nil
+	return nil
+}
+
+// validTextFileExtensions holds the set of file extensions that are considered text files.
+var validTextFileExtensions = map[string]bool{
+	".txt":  true,
+	".md":   true,
+	".go":   true,
+	".py":   true,
+	".js":   true,
+	".ts":   true,
+	".html": true,
+	".json": true,
+	".css":  true,
+}
+
+// isTextFile checks if a file is likely to be a text file based on its extension.
+func isTextFile(filename string) bool {
+	ext := filepath.Ext(filename)
+	return validTextFileExtensions[ext]
 }
