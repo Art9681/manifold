@@ -567,11 +567,11 @@ func (sqldb *SQLiteDB) executeFTSQuery(ftsQuery string, topN int) ([]string, err
 
 	// Execute the FTS5 query with match syntax
 	err := sqldb.db.Raw(`
-		SELECT prompt, response 
-		FROM chat_fts 
-		WHERE chat_fts MATCH ? 
-		ORDER BY bm25(chat_fts, 1.5, 1.0) DESC
-		LIMIT ?;
+		SELECT prompt, response, bm25(chat_fts, 2.0, 0.75) AS rank
+		FROM chat_fts
+		WHERE chat_fts MATCH ?
+		ORDER BY rank DESC
+		LIMIT 3;
 	`, ftsQuery, topN).Scan(&results).Error
 	if err != nil {
 		return nil, err

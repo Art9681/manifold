@@ -72,8 +72,13 @@ func setupRoutes(e *echo.Echo, config *Config) {
 	// Retrieval Augmented Generation (RAG) routes
 	// Route for storing text and embeddings
 	e.POST("/v1/embeddings", handleEmbeddingRequest)
-	e.POST("/v1/rag", func(c echo.Context) error {
-		_, err := handleRagRequest(c)
+
+	// Document routes
+	e.POST("/v1/documents/ingest/git", handleGitIngest)
+	e.POST("/v1/documents/ingest/pdf", handlePDFIngest)
+	e.POST("/v1/documents/split", handleSplitDocuments)
+	e.POST("/v1/documents/query", func(c echo.Context) error {
+		err := handleQueryDocuments(c)
 		return err
 	})
 

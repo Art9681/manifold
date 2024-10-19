@@ -7,12 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"manifold/internal/documents"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/blevesearch/bleve/v2"
 	"github.com/labstack/echo-contrib/jaegertracing"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -23,8 +23,10 @@ var (
 	completionsCtx     context.Context
 	cancel             context.CancelFunc
 	llmClient          LLMClient
-	searchIndex        bleve.Index
-	db                 *SQLiteDB
+	//searchIndex        bleve.Index
+	indexManager *documents.IndexManager
+	docManager   *documents.DocumentManager
+	db           *SQLiteDB
 )
 
 func main() {

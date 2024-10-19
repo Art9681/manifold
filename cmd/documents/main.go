@@ -48,8 +48,11 @@ func handleQueryChunks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create a search request based on the input text and desired top N results
+	req := indexManager.CreateSearchRequest(queryString, 10)
+
 	// Search for chunks related to the query
-	chunks, err := indexManager.SearchChunks(queryString)
+	chunks, err := indexManager.SearchChunks(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to search indexed chunks: %s", err), http.StatusInternalServerError)
 		return
@@ -75,20 +78,7 @@ func handleGitIngest(w http.ResponseWriter, r *http.Request) {
 	repoPath := "/tmp/git_repo" // Local path for cloning the repo
 	privateKeyPath := ""        // Leave empty for public repositories
 
-	// Create a GitLoader and pass in the DocumentManager and IndexManager
-	gitLoader := documents.NewGitLoader(
-		repoPath, cloneURL, branch, privateKeyPath,
-		nil,   // Optional file filter, e.g., to include only specific files
-		false, // Set to true if you want to skip host key verification
-		docManager,
-		indexManager,
-	)
-
-	// Load documents from the Git repository
-	if err := gitLoader.Load(); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to load Git repository: %s", err), http.StatusInternalServerError)
-		return
-	}
+	docManager.IngestGitRepo(repoPath, cloneURL, branch, privateKeyPath, nil, false)
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "Git repository ingested and indexed successfully.")

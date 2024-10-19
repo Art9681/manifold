@@ -15,6 +15,7 @@ import (
 
 	"manifold/internal/web"
 
+	index "github.com/blevesearch/bleve_index_api"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 )
@@ -383,21 +384,68 @@ func (t *RetrievalTool) GetParams() map[string]interface{} {
 }
 
 // Process is the main method that processes the input using sqlite fts5
+// func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
+// 	// Try to retrieve similar documents based on the input embedding
+// 	documents, err := db.RetrieveTopNDocuments(ctx, input, 20)
+// 	if err != nil {
+// 		return "", err
+// 	}
+
+// 	// Print the retrieved documents for debugging
+// 	log.Printf("Retrieved Documents: %v", documents)
+
+// 	// Combine the documents into a single string
+// 	var result strings.Builder
+// 	for _, doc := range documents {
+// 		result.WriteString(doc)
+// 		result.WriteString("\n") // Separator between documents
+// 	}
+
+// 	return result.String(), nil
+// }
+
 func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
-	// Try to retrieve similar documents based on the input embedding
-	documents, err := db.RetrieveTopNDocuments(ctx, input, 20)
+	// Use the IndexManager to create a search request based on the input
+	searchRequest := indexManager.CreateSearchRequest(input, 3)
+
+	// Perform the search to retrieve the top N documents
+	searchResults, err := indexManager.SearchChunks(searchRequest)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to retrieve documents: %w", err)
 	}
 
-	// Print the retrieved documents for debugging
-	log.Printf("Retrieved Documents: %v", documents)
+	// Print the retrieved search results for debugging
+	log.Printf("Retrieved Documents: %v", searchResults)
 
-	// Combine the documents into a single string
+	// Combine the retrieved documents' content into a single string
 	var result strings.Builder
-	for _, doc := range documents {
-		result.WriteString(doc)
-		result.WriteString("\n") // Separator between documents
+	for _, hit := range searchResults.Hits {
+		doc, err := indexManager.GetDocument(hit.ID)
+		if err != nil {
+			log.Printf("Error retrieving document %s: %v\n", hit.ID, err)
+			continue
+		}
+
+		// Extract the content of the document (assuming full_content field is stored)
+		var content string
+		doc.VisitFields(func(field index.Field) {
+			// Print the field name for debugging
+			log.Printf("Field Name: %s", field.Name())
+
+			if field.Name() == "chunk" {
+				result.WriteString(string(field.Value()))
+			} else if field.Name() == "full_content" {
+				// Print only the first 1000 characters of the full content
+				log.Printf("Full content: %s", string(field.Value()))
+				result.WriteString(string(field.Value()))
+			}
+		})
+
+		// Add the document content to the result builder
+		if content != "" {
+			result.WriteString(content)
+			result.WriteString("\n") // Separator between documents
+		}
 	}
 
 	return result.String(), nil
@@ -623,6 +671,21 @@ func SaveChatTurn(prompt, response, timestamp string) error {
         VALUES (?, ?, ?)
     `, prompt, response, "assistant").Error; err != nil {
 		return fmt.Errorf("failed to save chat turn in FTS5 table: %w", err)
+	}
+
+	// **New: Index in Bleve**
+	docID := fmt.Sprintf("%d-%s", chat.ID, timestamp)
+	// doc := map[string]interface{}{
+	// 	"prompt":    prompt,
+	// 	"response":  response,
+	// 	"modelName": "assistant",
+	// 	"timestamp": timestamp,
+	// }
+
+	fullDoc := fmt.Sprintf("%s\n%s", prompt, response)
+
+	if err := indexManager.IndexDocumentChunk(docID, fullDoc, "assistant"); err != nil {
+		return fmt.Errorf("failed to index document chunk: %w", err)
 	}
 
 	return nil

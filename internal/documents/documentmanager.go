@@ -90,6 +90,30 @@ func (dm *DocumentManager) IngestDocuments(docs []Document) {
 	dm.Documents = append(dm.Documents, docs...)
 }
 
+// IngestGitRepo ingests a Git repository and processes documents.
+func (dm *DocumentManager) IngestGitRepo(repoPath, cloneURL, branch, privateKeyPath string, fileFilter func(string) bool, insecureSkipVerify bool) error {
+	gitLoader := NewGitLoader(repoPath, cloneURL, branch, privateKeyPath, fileFilter, insecureSkipVerify, dm, dm.IndexManager)
+	return gitLoader.Load()
+}
+
+// IngestPDF ingests a PDF file from a given path.
+func (dm *DocumentManager) IngestPDF(filePath string) error {
+	pdfDoc, err := LoadPDF(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to load PDF: %w", err)
+	}
+	dm.IngestDocument(pdfDoc)
+
+	// Index the full document
+	docID := pdfDoc.Metadata["file_path"]
+	return dm.IndexManager.IndexFullDocument(docID, pdfDoc.PageContent, pdfDoc.Metadata["file_path"])
+}
+
+// SplitAndIndexDocuments splits ingested documents and indexes them.
+func (dm *DocumentManager) SplitAndIndexDocuments() (map[string][]string, error) {
+	return dm.SplitDocuments() // Uses existing split logic
+}
+
 // Helper function to generate a unique key for the document
 func generateDocumentKey(doc Document) string {
 	if source, ok := doc.Metadata["source"]; ok {

@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/blevesearch/bleve"
+	"github.com/blevesearch/bleve/v2"
+	index "github.com/blevesearch/bleve_index_api"
 )
 
 // IndexManager handles the indexing and retrieval of document chunks.
@@ -56,29 +57,20 @@ func (im *IndexManager) IndexDocumentChunk(docID, chunk, filePath string) error 
 	return nil
 }
 
-// SearchChunks retrieves chunks based on the query string.
-func (im *IndexManager) SearchChunks(queryString string) ([]string, error) {
-	query := bleve.NewQueryStringQuery(queryString)
-	search := bleve.NewSearchRequest(query)
-	searchResults, err := im.Index.Search(search)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search chunks: %w", err)
-	}
+// CreateSearchRequest creates a search request based on the input text and desired top N results.
+func (im *IndexManager) CreateSearchRequest(queryText string, topN int) *bleve.SearchRequest {
+	query := bleve.NewMatchQuery(queryText)
+	searchRequest := bleve.NewSearchRequest(query)
+	searchRequest.Size = topN
+	return searchRequest
+}
 
-	var results []string
-	for _, hit := range searchResults.Hits {
-		doc, err := im.Index.Document(hit.ID)
-		if err != nil {
-			log.Printf("failed to load document for ID %s: %v", hit.ID, err)
-			continue
-		}
+// SearchChunks performs a search on the index using a given search request.
+func (im *IndexManager) SearchChunks(searchRequest *bleve.SearchRequest) (*bleve.SearchResult, error) {
+	return im.Index.Search(searchRequest)
+}
 
-		// Extract the "chunk" or "full_content" field from the document
-		for _, field := range doc.Fields {
-			if field.Name() == "chunk" || field.Name() == "full_content" {
-				results = append(results, string(field.Value()))
-			}
-		}
-	}
-	return results, nil
+// GetDocument retrieves a document by its ID from the index.
+func (im *IndexManager) GetDocument(docID string) (index.Document, error) {
+	return im.Index.Document(docID)
 }
