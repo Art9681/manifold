@@ -405,8 +405,13 @@ func (t *RetrievalTool) GetParams() map[string]interface{} {
 // }
 
 func (t *RetrievalTool) Process(ctx context.Context, input string) (string, error) {
+	promptEmbeddings, err := GenerateEmbedding(input)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate embeddings: %w", err)
+	}
+
 	// Use the IndexManager to create a search request based on the input
-	searchRequest := indexManager.CreateSearchRequest(input, 3)
+	searchRequest := indexManager.CreateSearchRequest(input, 10)
 
 	// Perform the search to retrieve the top N documents
 	searchResults, err := indexManager.SearchChunks(searchRequest)
@@ -428,23 +433,51 @@ func (t *RetrievalTool) Process(ctx context.Context, input string) (string, erro
 
 		// Extract the content of the document (assuming full_content field is stored)
 		var content string
+
 		doc.VisitFields(func(field index.Field) {
 			// Print the field name for debugging
 			log.Printf("Field Name: %s", field.Name())
 
 			if field.Name() == "chunk" {
-				result.WriteString(string(field.Value()))
+				embeddings, err := GenerateEmbedding(string(field.Value()))
+				if err != nil {
+					log.Printf("Error generating embeddings: %v", err)
+				} else {
+					similarity := CosineSimilarity(promptEmbeddings, embeddings)
+					log.Printf("Chunk: %s", string(field.Value()))
+					log.Printf("Search Score: %f", hit.Score)
+					log.Printf("Similarity: %f", similarity)
+
+					// If the similarity is above a certain threshold, add the content to the result
+					if similarity > 0.5 {
+						content += string(field.Value())
+					}
+				}
+
 			} else if field.Name() == "full_content" {
-				// Print only the first 1000 characters of the full content
-				log.Printf("Full content: %s", string(field.Value()))
-				result.WriteString(string(field.Value()))
+				embeddings, err := GenerateEmbedding(string(field.Value()))
+				if err != nil {
+					log.Printf("Error generating embeddings: %v", err)
+				} else {
+					similarity := CosineSimilarity(promptEmbeddings, embeddings)
+					log.Printf("Full Document: %s", string(field.Value()))
+					log.Printf("Search Score: %f", hit.Score)
+					log.Printf("Similarity: %f", similarity)
+
+					// If the similarity is above a certain threshold, add the content to the result
+					if similarity > 0.5 {
+						content += string(field.Value())
+					}
+				}
 			}
 		})
 
-		// Add the document content to the result builder
+		// Append the content to the result if it is not empty
 		if content != "" {
 			result.WriteString(content)
 			result.WriteString("\n") // Separator between documents
+		} else {
+			result.WriteString("No relevant content found.\n")
 		}
 	}
 
