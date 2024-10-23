@@ -43,14 +43,9 @@ func handleWebSocketConnection(c echo.Context) error {
 		return err
 	}
 
-	// Process the user prompt through the WorkflowManager
-	// processedPrompt, err := globalWM.Run(context.Background(), wsMessage.ChatMessage)
-	// if err != nil {
-	// 	log.Printf("Error processing prompt through WorkflowManager: %v", err)
-	// }
-
 	// Get the system instructions (assuming they are part of the message)
-	cpt := GetSystemTemplate(wsMessage.RoleInstructions, wsMessage.ChatMessage)
+	// cpt := GetSystemTemplate(wsMessage.RoleInstructions, wsMessage.ChatMessage)
+	// cpt := GetSystemTemplate("user", wsMessage.ChatMessage)
 
 	// Get the model path from the name of the model from the database
 	models, err := db.GetModels()
@@ -71,10 +66,17 @@ func handleWebSocketConnection(c echo.Context) error {
 		}
 	}
 
+	messages := []Message{
+		{
+			Role:    "user",
+			Content: wsMessage.ChatMessage,
+		},
+	}
+
 	// Create a new CompletionRequest using the processed prompt
 	payload := &CompletionRequest{
 		Model:       modelPath,
-		Messages:    cpt.FormatMessages(nil), // Assuming no additional variables
+		Messages:    messages, // Assuming no additional variables
 		Temperature: 0.3,
 		MaxTokens:   64000, // Ensure this is set by the backend LLM config in a future commit.
 		Stream:      true,

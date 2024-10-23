@@ -134,7 +134,7 @@ func UpdateWorkflowManagerForToolToggle(toolName string, enabled bool, config *C
 
 				// Initialize the LLMClient pointing to the Teams service
 				baseURL := fmt.Sprintf("http://%s:%d/v1", teamsTool.serviceConfig.Host, teamsTool.serviceConfig.Port)
-				teamsTool.client = NewLocalLLMClient(baseURL, "", "") // Adjust APIKey if needed
+				teamsTool.client = NewLocalLLMClient(baseURL, "", "", "") // Adjust APIKey if needed
 
 				log.Printf("Teams tool '%s' has been enabled and service started", toolName)
 

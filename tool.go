@@ -519,16 +519,16 @@ func (t *TeamsTool) Process(ctx context.Context, input string) (string, error) {
 	cpt := GetSystemTemplate("", ins)
 
 	// Create a new LLM Client
-	llmClient := NewLocalLLMClient("http://0.0.0.0:32185/v1", "", "")
+	llmClient := NewLocalLLMClient("http://0.0.0.0:32185/v1", "", "", "")
 
 	// Create the completion request payload
 	payload := &CompletionRequest{
 		Model:       "teams-model", // Update with the actual model name if needed
 		Messages:    cpt.FormatMessages(nil),
 		Temperature: 0.1, // Adjust parameters as needed
-		TopP:        0.9,
-		MaxTokens:   4096,
-		Stream:      false, // As per requirement
+		//TopP:        0.9,
+		MaxTokens: 4096,
+		Stream:    false, // As per requirement
 	}
 
 	// Print the payload for debugging
@@ -613,7 +613,7 @@ func (t *TeamsTool) SetParams(params map[string]interface{}, config *Config) err
 
 		// Initialize the LLMClient pointing to the Teams service
 		baseURL := fmt.Sprintf("http://%s:%d/v1", t.serviceConfig.Host, t.serviceConfig.Port)
-		t.client = NewLocalLLMClient(baseURL, "", "") // Adjust APIKey if needed
+		t.client = NewLocalLLMClient(baseURL, "", "", "") // Adjust APIKey if needed
 	}
 
 	return nil

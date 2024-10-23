@@ -25,14 +25,15 @@ type ToolConfig struct {
 }
 
 type Config struct {
-	OpenAIAPIKey   string            `yaml:"openai_api_key,omitempty"`
-	DataPath       string            `yaml:"data_path"`
-	LLMBackend     string            `yaml:"llm_backend"`
-	Services       []ServiceConfig   `yaml:"services"`
-	Tools          []ToolConfig      `yaml:"tools"`
-	Roles          []CompletionsRole `yaml:"roles"`
-	LanguageModels []LanguageModel   `json:"language_models"`
-	SelectedModels SelectedModels    `json:"selected_models"`
+	OpenAIAPIKey    string            `yaml:"openai_api_key,omitempty"`
+	AnthropicAPIKey string            `yaml:"anthropic_api_key,omitempty"`
+	DataPath        string            `yaml:"data_path"`
+	LLMBackend      string            `yaml:"llm_backend"`
+	Services        []ServiceConfig   `yaml:"services"`
+	Tools           []ToolConfig      `yaml:"tools"`
+	Roles           []CompletionsRole `yaml:"roles"`
+	LanguageModels  []LanguageModel   `json:"language_models"`
+	SelectedModels  SelectedModels    `json:"selected_models"`
 }
 
 func LoadConfig(filename string) (*Config, error) {

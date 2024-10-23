@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewLocalLLMClient(t *testing.T) {
-	client := NewLocalLLMClient("http://localhost:8080", "test-model", "test-api-key")
+	client := NewLocalLLMClient("http://localhost:8080", "test-model", "test-api-key", "test")
 	require.NotNil(t, client, "NewLocalLLMClient should not return nil")
 
 	localClient, ok := client.(*Client)
@@ -17,4 +17,5 @@ func TestNewLocalLLMClient(t *testing.T) {
 	assert.Equal(t, "http://localhost:8080", localClient.BaseURL)
 	assert.Equal(t, "test-model", localClient.Model)
 	assert.Equal(t, "test-api-key", localClient.APIKey)
+	assert.Equal(t, "local", localClient.Backend)
 }

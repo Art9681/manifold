@@ -156,7 +156,7 @@ func main() {
 
 		// Construct the base URL from Host and Port
 		baseURL := fmt.Sprintf("http://%s:%d/v1", llmService.Host, llmService.Port)
-		llmClient = NewLocalLLMClient(baseURL, "", "")
+		llmClient = NewLocalLLMClient(baseURL, "", "", "gguf")
 
 	case "mlx":
 		// Get the path to the folder containing the model
@@ -185,15 +185,21 @@ func main() {
 
 		// Construct the base URL from Host and Port
 		baseURL := fmt.Sprintf("http://%s:%d/v1", llmService.Host, llmService.Port)
-		llmClient = NewLocalLLMClient(baseURL, "", "")
+		llmClient = NewLocalLLMClient(baseURL, "", "", "mlx")
 
 	case "openai":
 		completionsCtx, cancel = context.WithCancel(context.Background())
 		if config.OpenAIAPIKey == "" {
 			log.Fatal("OpenAI API key is not set in config")
 		}
-		llmClient = NewLocalLLMClient("https://api.openai.com/v1", "gpt-4o-mini", config.OpenAIAPIKey)
+		llmClient = NewLocalLLMClient("https://api.openai.com/v1", "chatgpt-4o-latest", config.OpenAIAPIKey, "openai")
 
+	case "anthropic":
+		completionsCtx, cancel = context.WithCancel(context.Background())
+		if config.AnthropicAPIKey == "" {
+			log.Fatal("Anthropic API key is not set in config")
+		}
+		llmClient = NewLocalLLMClient("https://api.anthropic.com/v1", "claude-3-haiku-20240307", config.AnthropicAPIKey, "anthropic")
 	default:
 		log.Fatal("Invalid LLMBackend specified in config")
 	}
@@ -265,7 +271,7 @@ func restartCompletionsService(config *Config, verbose bool) {
 
 		// Construct the base URL from Host and Port
 		baseURL := fmt.Sprintf("http://%s:%d/v1", llmService.Host, llmService.Port)
-		llmClient = NewLocalLLMClient(baseURL, "", "")
+		llmClient = NewLocalLLMClient(baseURL, "", "", "gguf")
 
 	case "mlx":
 		// Get the path to the folder containing the model
@@ -296,14 +302,7 @@ func restartCompletionsService(config *Config, verbose bool) {
 
 		// Construct the base URL from Host and Port
 		baseURL := fmt.Sprintf("http://%s:%d/v1", llmService.Host, llmService.Port)
-		llmClient = NewLocalLLMClient(baseURL, "", "")
-
-	case "openai":
-		completionsCtx, cancel = context.WithCancel(context.Background())
-		if config.OpenAIAPIKey == "" {
-			log.Fatal("OpenAI API key is not set in config")
-		}
-		llmClient = NewLocalLLMClient("https://api.openai.com/v1", "gpt-4o-mini", config.OpenAIAPIKey)
+		llmClient = NewLocalLLMClient(baseURL, "", "", "mlx")
 
 	default:
 		log.Fatal("Invalid LLMBackend specified in config")

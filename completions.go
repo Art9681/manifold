@@ -82,9 +82,9 @@ type CompletionRequest struct {
 	Model       string    `json:"model,omitempty"`
 	Messages    []Message `json:"messages"`
 	Temperature float64   `json:"temperature,omitempty"`
-	TopP        float64   `json:"top_p,omitempty"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
-	Stream      bool      `json:"stream,omitempty"`
+	//TopP        float64   `json:"top_p,omitempty"`
+	MaxTokens int  `json:"max_tokens,omitempty"`
+	Stream    bool `json:"stream,omitempty"`
 }
 
 // Choice represents a choice for the completion response.
@@ -128,6 +128,27 @@ type ErrorResponse struct {
 type UsageMetrics struct {
 	PromptTokens int `json:"prompt_tokens"`
 	TotalTokens  int `json:"total_tokens"`
+}
+
+type AnthropicResponse struct {
+	ID           string                `json:"id"`
+	Type         string                `json:"type"`
+	Role         string                `json:"role"`
+	Content      []ContentBlock        `json:"content"`
+	Model        string                `json:"model"`
+	StopReason   string                `json:"stop_reason"`
+	StopSequence interface{}           `json:"stop_sequence"`
+	Usage        AnthropicUsageMetrics `json:"usage"`
+}
+
+type ContentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type AnthropicUsageMetrics struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 // GetSystemTemplate returns the system template.
@@ -176,61 +197,26 @@ func (cpt *ChatPromptTemplate) FormatMessages(vars map[string]string) []Message 
 	return formattedMessages
 }
 
-func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.Response, error) {
-
-	// TODO: Add a better way to handle the model selection using the frontend
-	// Jank way to set the model to gpt-4o-mini if the client url is openai
-	// if the client url is openai, set the payload model to gpt-4o-mini
-	// this should not be hard coded but loaded from app config instead
-	if client.BaseURL == "https://api.openai.com/v1" {
-		// Print the client base url
-		fmt.Println(client.BaseURL)
-		payload.Model = "chatgpt-4o-latest"
-
-		// Create a new CompletionRequest without the MaxTokens field
-		payload = &CompletionRequest{
-			Model:       payload.Model,
-			Messages:    payload.Messages,
-			Temperature: payload.Temperature,
-			Stream:      payload.Stream,
-		}
-	}
-
-	// Convert the payload to JSON
-	jsonPayload, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	url := client.BaseURL + "/chat/completions"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+client.APIKey)
-
-	return http.DefaultClient.Do(req)
-}
-
 func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID int, model string, payload *CompletionRequest, responseBuffer *bytes.Buffer) error {
-	// Get the string in between brackets for the user prompt
-	userPrompt := payload.Messages[1].Content
-	userPrompt = userPrompt[1 : len(userPrompt)-1]
+	// Check if the payload contains at least one message
+	if len(payload.Messages) == 0 {
+		log.Printf("Error: No messages found in the payload")
+		return fmt.Errorf("no messages found in the payload")
+	}
+
+	userPrompt := payload.Messages[0].Content
 
 	// Print the user prompt
-	fmt.Println("USER PROMPT")
-	fmt.Println(userPrompt)
+	fmt.Println("USER PROMPT:", userPrompt)
 
 	// Process the user prompt through the WorkflowManager
-	processedPrompt, err := globalWM.Run(context.Background(), payload.Messages[1].Content, c)
+	processedPrompt, err := globalWM.Run(context.Background(), userPrompt, c)
 	if err != nil {
 		log.Printf("Error processing prompt through WorkflowManager: %v", err)
 	}
 
 	// Prepend the processed prompt to the messages
-	payload.Messages[1].Content = processedPrompt
+	payload.Messages[0].Content = processedPrompt
 
 	timestamp := time.Now().Format(time.RFC3339)
 
@@ -245,60 +231,105 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 	}
 	defer resp.Body.Close()
 
+	// Process the streamed response
+	var accumulatedText string
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
 
+		// Check if the line has "data: " prefix
 		if strings.HasPrefix(line, "data: ") {
 			jsonStr := line[6:] // Strip the "data: " prefix
-			var data struct {
-				Choices []struct {
-					FinishReason string `json:"finish_reason"`
-					Delta        struct {
-						Content string `json:"content"`
-					} `json:"delta"`
-				} `json:"choices"`
+
+			// Parse the event
+			var rawEvent map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonStr), &rawEvent); err != nil {
+				log.Printf("Error unmarshalling event: %v", err)
+				continue
 			}
 
-			if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-				// Print the user prompt
-				err := SaveChatTurn(userPrompt, responseBuffer.String(), timestamp)
-				if err != nil {
+			// Handle specific types of events
+			eventType, ok := rawEvent["type"].(string)
+			if !ok {
+				continue
+			}
+
+			switch eventType {
+			case "content_block_delta":
+				// Extract the text from the delta
+				delta, ok := rawEvent["delta"].(map[string]interface{})
+				if ok {
+					text, textOk := delta["text"].(string)
+					if textOk {
+						accumulatedText += text
+						responseBuffer.WriteString(text)
+
+						htmlMsg := web.MarkdownToHTML(responseBuffer.Bytes())
+						turnIDStr := fmt.Sprint(chatID + TurnCounter)
+						formattedContent := fmt.Sprintf("<div id='response-content-%s' class='mx-1' hx-trigger='load'>%s</div>\n<codapi-snippet engine='browser' sandbox='javascript' editor='basic'></codapi-snippet>", turnIDStr, htmlMsg)
+
+						if err := c.WriteMessage(websocket.TextMessage, []byte(formattedContent)); err != nil {
+							return err
+						}
+					}
+				}
+			case "content_block_stop":
+				// Finalize the content block processing
+				log.Printf("Completed content block: %s", accumulatedText)
+
+				// Convert accumulated text to HTML and send as a response update
+				htmlMsg := web.MarkdownToHTML([]byte(accumulatedText))
+				turnIDStr := fmt.Sprint(chatID + TurnCounter)
+				formattedContent := fmt.Sprintf("<div id='response-content-%s' class='mx-1' hx-trigger='load'>%s</div>\n<codapi-snippet engine='browser' sandbox='javascript' editor='basic'></codapi-snippet>", turnIDStr, htmlMsg)
+
+				if err := c.WriteMessage(websocket.TextMessage, []byte(formattedContent)); err != nil {
+					return err
+				}
+
+				// Clear the accumulated text after sending
+				accumulatedText = ""
+				responseBuffer.Reset()
+
+				// Save the chat turn
+				if err := SaveChatTurn(userPrompt, accumulatedText, timestamp); err != nil {
 					log.Printf("Error saving chat turn: %v", err)
 				}
 
-				return fmt.Errorf("%s", responseBuffer.String())
+				// Return an error to close the connection
+				return fmt.Errorf("content block stop")
+
+			case "message_delta":
+				// Handle message completion, stop reasons, or usage updates
+				log.Printf("Completed message received.")
+			// Add cases for other event types if needed
+			default:
+				// Ignore other event types like "ping", "message_start", etc.
+				continue
 			}
 
-			for _, choice := range data.Choices {
-				// If the finish reason is "stop", then stop streaming
-				if choice.FinishReason == "stop" {
-					err := SaveChatTurn(userPrompt, responseBuffer.String(), timestamp)
-					if err != nil {
-						log.Printf("Error saving chat turn: %v", err)
-					}
-
-					// Clear all buffers and prompts
-					responseBuffer.Reset()
-
-					return fmt.Errorf("%s", responseBuffer.String())
-				}
-
-				responseBuffer.WriteString(choice.Delta.Content)
-			}
-
-			htmlMsg := web.MarkdownToHTML(responseBuffer.Bytes())
-			turnIDStr := fmt.Sprint(chatID + TurnCounter)
-			formattedContent := fmt.Sprintf("<div id='response-content-%s' class='mx-1' hx-trigger='load'>%s</div>\n<codapi-snippet engine='browser' sandbox='javascript' editor='basic'></codapi-snippet>", turnIDStr, htmlMsg)
-
-			if err := c.WriteMessage(websocket.TextMessage, []byte(formattedContent)); err != nil {
-				return err
-			}
+			// Log accumulated response to see the progress
+			log.Printf("Accumulated Response: %s", accumulatedText)
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		return err
+	}
+
+	// Save the final chat turn if anything remains
+	if accumulatedText != "" {
+		htmlMsg := web.MarkdownToHTML([]byte(accumulatedText))
+		turnIDStr := fmt.Sprint(chatID + TurnCounter)
+		finalFormattedContent := fmt.Sprintf("<div id='response-content-%s' class='mx-1' hx-trigger='load'>%s</div>\n<codapi-snippet engine='browser' sandbox='javascript' editor='basic'></codapi-snippet>", turnIDStr, htmlMsg)
+
+		if err := c.WriteMessage(websocket.TextMessage, []byte(finalFormattedContent)); err != nil {
+			return err
+		}
+
+		// Save the final chat turn
+		if err := SaveChatTurn(userPrompt, accumulatedText, timestamp); err != nil {
+			log.Printf("Error saving chat turn: %v", err)
+		}
 	}
 
 	return nil
