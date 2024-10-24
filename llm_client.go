@@ -44,7 +44,7 @@ func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.R
 		fmt.Println(client.BaseURL)
 		payload.Model = "claude-3-5-sonnet-20241022"
 		// No need to create a new payload object, just modify the existing one
-		payload.MaxTokens = 1024 // Default max tokens, if needed
+		payload.MaxTokens = 8192 // Default max tokens, if needed
 	}
 
 	// Convert the payload to JSON
