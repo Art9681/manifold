@@ -12,3 +12,6 @@ cmd/repoconcat/manifold.txt
 cmd/repoconcat/README.md
 refactor_notes.md
 cmd/reporag/codebase.json
+data/models-embeddings/nomic-embed-text-v1.5.Q8_0.gguf
+data/models-gguf/qwen2.5-32b/Qwen2.5-32B-Instruct-Q4_K_L.gguf
+data/eternaldata.db

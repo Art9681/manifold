@@ -22,7 +22,7 @@ func main() {
 	index := coderag.NewCodeIndex()
 
 	// Index the repository
-	repoPath := "/local/path/to/your/repo"
+	repoPath := "E:\\manifold"
 	fmt.Printf("Indexing repository at: %s\n", repoPath)
 	if err := index.IndexRepository(repoPath, cfg); err != nil {
 		log.Fatalf("Indexing failed: %v", err)

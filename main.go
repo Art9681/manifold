@@ -247,6 +247,8 @@ func restartCompletionsService(config *Config, verbose bool) {
 		// - --gpu-layers
 		// - 99
 		// print the selected model path
+
+		config.SelectedModels.ModelPath = "E:\\manifold\\data\\models-gguf\\qwen2.5-32b\\Qwen2.5-32B-Instruct-Q4_K_L.gguf"
 		log.Println("Selected model path:", config.SelectedModels.ModelPath)
 		config.Services[1].Args = []string{
 			"--model",

@@ -28,26 +28,22 @@ type Config struct {
 
 // LoadConfig loads configuration from environment variables.
 func LoadConfig() (*Config, error) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
-	}
 
-	endpoint := strings.TrimSpace(os.Getenv("OPENAI_API_ENDPOINT"))
+	endpoint := ""
 	if endpoint == "" {
 		// Adjust to your working API endpoint
 		// endpoint = "https://api.openai.com/v1/chat/completions"
 		endpoint = "http://localhost:32182/v1/chat/completions"
 	}
 
-	model := os.Getenv("OPENAI_MODEL")
+	model := ""
 	if model == "" {
 		// Example model identifier, make sure it matches your setup
 		model = "gpt-4o-mini"
 	}
 
 	return &Config{
-		OpenAIAPIKey:   apiKey,
+		OpenAIAPIKey:   "",
 		OpenAIEndpoint: endpoint,
 		OpenAIModel:    model,
 	}, nil
