@@ -5,13 +5,25 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/ledongthuc/pdf"
 )
 
 // LoadPDF loads a PDF file and returns a Document.
 func LoadPDF(filePath string) (Document, error) {
-	content, err := GetPdfContents(filePath)
+	var wg sync.WaitGroup
+	var content string
+	var err error
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		content, err = GetPdfContents(filePath)
+	}()
+
+	wg.Wait()
+
 	if err != nil {
 		return Document{}, err
 	}
@@ -42,22 +54,31 @@ func GetPdfContents(filePath string) (string, error) {
 	// Iterate through the pages
 	totalPage := reader.NumPage()
 	var sb strings.Builder
+	var wg sync.WaitGroup
+
 	for pageIndex := 1; pageIndex <= totalPage; pageIndex++ {
-		page := reader.Page(pageIndex)
-		if page.V.IsNull() {
-			continue
-		}
+		wg.Add(1)
+		go func(pageIndex int) {
+			defer wg.Done()
+			page := reader.Page(pageIndex)
+			if page.V.IsNull() {
+				return
+			}
 
-		// Extract text from the page
-		text, err := page.GetPlainText(nil)
-		if err != nil {
-			return "", fmt.Errorf("failed to extract text from page %d: %w", pageIndex, err)
-		}
+			// Extract text from the page
+			text, err := page.GetPlainText(nil)
+			if err != nil {
+				fmt.Printf("failed to extract text from page %d: %v\n", pageIndex, err)
+				return
+			}
 
-		// Format the text content of the page as Markdown
-		markdownText := formatAsMarkdown(text)
-		sb.WriteString(markdownText)
+			// Format the text content of the page as Markdown
+			markdownText := formatAsMarkdown(text)
+			sb.WriteString(markdownText)
+		}(pageIndex)
 	}
+
+	wg.Wait()
 
 	return sb.String(), nil
 }

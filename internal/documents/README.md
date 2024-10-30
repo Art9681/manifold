@@ -1,4 +1,3 @@
-
 # Documents Package
 
 Documents is a package for processing and analyzing files and documents. It supports extraction, transformation, and organization of textual data for use in machine learning and AI workflows.
@@ -23,6 +22,14 @@ Provides a tool for loading documents from a Git repository, including functiona
 - **Custom File Filtering**: Include or exclude files based on custom logic provided via a filter function.
 - **SSH Authentication**: Authenticate to remote repositories using SSH private keys.
 - **Insecure Host Key Verification Skip**: Option to skip SSH host key verification (use with caution).
+
+### Concurrency
+To improve performance, concurrency has been added to various functions in the package. This allows for parallel processing of tasks, making the package more efficient and faster.
+
+- **Concurrent Document Ingestion**: The `IngestDocument` and `IngestGitRepo` functions now use concurrency to ingest documents in parallel.
+- **Concurrent PDF Loading**: The `LoadPDF` function now uses concurrency to load PDF files in parallel.
+- **Concurrent Document Splitting**: The `SplitDocuments` function now uses concurrency to split documents in parallel.
+- **Concurrent Indexing**: The `IndexFullDocument` and `IndexDocumentChunk` functions now use concurrency to index documents in parallel.
 
 ## Example
 

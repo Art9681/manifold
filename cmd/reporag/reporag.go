@@ -1,4 +1,3 @@
-// reporag.go
 package main
 
 import (
@@ -122,13 +121,18 @@ func insertChunksIntoDB(ctx context.Context, sqldb *SQLiteDB, index *coderag.Cod
 	}
 	defer stmt.Close()
 
+	var wg sync.WaitGroup
 	for i := 0; i < len(chunks); i++ {
-		_, err := stmt.ExecContext(ctx, summaries[i], chunks[i])
-		if err != nil {
-			log.Printf("Failed to insert chunk %d: %v", i, err)
-			continue
-		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := stmt.ExecContext(ctx, summaries[i], chunks[i])
+			if err != nil {
+				log.Printf("Failed to insert chunk %d: %v", i, err)
+			}
+		}(i)
 	}
+	wg.Wait()
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %v", err)

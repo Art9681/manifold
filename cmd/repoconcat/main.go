@@ -1,4 +1,3 @@
-// main.go
 package main
 
 import (
@@ -9,6 +8,7 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -85,13 +85,23 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Create a WaitGroup to wait for all goroutines to finish
+	var wg sync.WaitGroup
+
 	// Loop over each path
 	for _, path := range pathList {
-		err := processPath(ctx, path, typeList, *recursive, *ignorePattern, fileContents, fileStructure)
-		if err != nil {
-			log.Printf("Error processing path %s: %v\n", path, err)
-		}
+		wg.Add(1)
+		go func(path string) {
+			defer wg.Done()
+			err := processPath(ctx, path, typeList, *recursive, *ignorePattern, fileContents, fileStructure)
+			if err != nil {
+				log.Printf("Error processing path %s: %v\n", path, err)
+			}
+		}(path)
 	}
+
+	// Wait for all goroutines to finish
+	wg.Wait()
 
 	// Generate the file/folder structure string
 	formatter := &PlainTextFormatter{}
