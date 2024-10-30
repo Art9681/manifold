@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"manifold/internal/documents"
 )
@@ -78,7 +79,14 @@ func handleGitIngest(w http.ResponseWriter, r *http.Request) {
 	repoPath := "/tmp/git_repo" // Local path for cloning the repo
 	privateKeyPath := ""        // Leave empty for public repositories
 
-	docManager.IngestGitRepo(repoPath, cloneURL, branch, privateKeyPath, nil, false)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		docManager.IngestGitRepo(repoPath, cloneURL, branch, privateKeyPath, nil, false)
+	}()
+
+	wg.Wait()
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "Git repository ingested and indexed successfully.")
@@ -116,20 +124,27 @@ func handlePDFIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load the PDF into the DocumentManager
-	pdfDoc, err := documents.LoadPDF(savePath)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to process PDF: %s", err), http.StatusInternalServerError)
-		return
-	}
-	docManager.IngestDocument(pdfDoc)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Load the PDF into the DocumentManager
+		pdfDoc, err := documents.LoadPDF(savePath)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to process PDF: %s", err), http.StatusInternalServerError)
+			return
+		}
+		docManager.IngestDocument(pdfDoc)
 
-	// Index the full document
-	docID := pdfDoc.Metadata["file_path"] // or generate a unique ID
-	if err := indexManager.IndexFullDocument(docID, pdfDoc.PageContent, pdfDoc.Metadata["file_path"]); err != nil {
-		http.Error(w, "Failed to index full document", http.StatusInternalServerError)
-		return
-	}
+		// Index the full document
+		docID := pdfDoc.Metadata["file_path"] // or generate a unique ID
+		if err := indexManager.IndexFullDocument(docID, pdfDoc.PageContent, pdfDoc.Metadata["file_path"]); err != nil {
+			http.Error(w, "Failed to index full document", http.StatusInternalServerError)
+			return
+		}
+	}()
+
+	wg.Wait()
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "PDF ingested and indexed successfully.")
@@ -139,31 +154,38 @@ func handlePDFIngest(w http.ResponseWriter, r *http.Request) {
 func handleSplitDocuments(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Starting document splitting process...")
 
-	// Split the documents using the DocumentManager
-	splits, err := docManager.SplitDocuments()
-	if err != nil {
-		fmt.Printf("Error: Failed to split documents: %s\n", err)
-		http.Error(w, fmt.Sprintf("Failed to split documents: %s", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Provide feedback on the number of documents processed
-	fmt.Printf("Document splitting complete. Processed %d documents.\n", len(splits))
-
-	// Set the response header to plain text
-	w.Header().Set("Content-Type", "text/plain")
-
-	// Write each split chunk in the specified format
-	for filePath, chunks := range splits {
-		fmt.Printf("Document [%s]: Generated %d chunks.\n", filePath, len(chunks)) // Console output for each document
-		for _, chunk := range chunks {
-			// Pretty print the chunk
-			prettyChunk := prettyPrintChunk(chunk)
-			fmt.Fprintf(w, "[%s]\n%s\n\n", filePath, prettyChunk)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Split the documents using the DocumentManager
+		splits, err := docManager.SplitDocuments()
+		if err != nil {
+			fmt.Printf("Error: Failed to split documents: %s\n", err)
+			http.Error(w, fmt.Sprintf("Failed to split documents: %s", err), http.StatusInternalServerError)
+			return
 		}
-	}
 
-	fmt.Println("Document splitting and indexing operation completed.")
+		// Provide feedback on the number of documents processed
+		fmt.Printf("Document splitting complete. Processed %d documents.\n", len(splits))
+
+		// Set the response header to plain text
+		w.Header().Set("Content-Type", "text/plain")
+
+		// Write each split chunk in the specified format
+		for filePath, chunks := range splits {
+			fmt.Printf("Document [%s]: Generated %d chunks.\n", filePath, len(chunks)) // Console output for each document
+			for _, chunk := range chunks {
+				// Pretty print the chunk
+				prettyChunk := prettyPrintChunk(chunk)
+				fmt.Fprintf(w, "[%s]\n%s\n\n", filePath, prettyChunk)
+			}
+		}
+
+		fmt.Println("Document splitting and indexing operation completed.")
+	}()
+
+	wg.Wait()
 }
 
 // prettyPrintChunk formats the text content for better readability.

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"manifold/internal/coderag"
 
@@ -218,42 +219,52 @@ func indexRepositoryToElasticsearch(repoPath string, cfg *coderag.Config, esClie
 	}
 
 	// Convert and ingest each function data into Elasticsearch as it's processed
+	var wg sync.WaitGroup
 	for _, function := range index.Functions {
-		// Generate embeddings for the function's code
-		embedding, err := generateEmbeddings(function.Code)
-		if err != nil {
-			return fmt.Errorf("error generating embeddings: %v", err)
-		}
+		wg.Add(1)
+		go func(function coderag.Function) {
+			defer wg.Done()
+			// Generate embeddings for the function's code
+			embedding, err := generateEmbeddings(function.Code)
+			if err != nil {
+				log.Printf("error generating embeddings: %v", err)
+				return
+			}
 
-		// Add embeddings to the function data
-		functionWithEmbedding := FunctionInfo{
-			Name:          function.Name,
-			Comments:      function.Comments,
-			Code:          function.Code,
-			CallsCount:    len(function.Calls),
-			CalledByCount: len(function.CalledBy),
-			Embedding:     embedding,
-		}
+			// Add embeddings to the function data
+			functionWithEmbedding := FunctionInfo{
+				Name:          function.Name,
+				Comments:      function.Comments,
+				Code:          function.Code,
+				CallsCount:    len(function.Calls),
+				CalledByCount: len(function.CalledBy),
+				Embedding:     embedding,
+			}
 
-		docJSON, err := json.Marshal(functionWithEmbedding)
-		if err != nil {
-			return fmt.Errorf("error marshaling function data: %v", err)
-		}
+			docJSON, err := json.Marshal(functionWithEmbedding)
+			if err != nil {
+				log.Printf("error marshaling function data: %v", err)
+				return
+			}
 
-		// Ingest each document into Elasticsearch immediately
-		res, err := esClient.Index(
-			"functions",
-			bytes.NewReader(docJSON),
-		)
-		if err != nil {
-			return fmt.Errorf("error indexing function data: %v", err)
-		}
-		defer res.Body.Close()
+			// Ingest each document into Elasticsearch immediately
+			res, err := esClient.Index(
+				"functions",
+				bytes.NewReader(docJSON),
+			)
+			if err != nil {
+				log.Printf("error indexing function data: %v", err)
+				return
+			}
+			defer res.Body.Close()
 
-		if res.IsError() {
-			return fmt.Errorf("error response when indexing document: %s", res.String())
-		}
+			if res.IsError() {
+				log.Printf("error response when indexing document: %s", res.String())
+				return
+			}
+		}(function)
 	}
+	wg.Wait()
 
 	return nil
 }

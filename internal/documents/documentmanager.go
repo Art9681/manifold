@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 )
 
 type Document struct {
@@ -73,16 +74,22 @@ func (dm *DocumentManager) SplitDocuments() (map[string][]string, error) {
 
 // IngestDocument ingests a single document into the DocumentManager and indexes it.
 func (dm *DocumentManager) IngestDocument(doc Document) {
-	dm.Documents = append(dm.Documents, doc)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dm.Documents = append(dm.Documents, doc)
 
-	// Index the full document content if IndexManager is set
-	if dm.IndexManager != nil {
-		docID := generateDocumentKey(doc)
-		err := dm.IndexManager.IndexFullDocument(docID, doc.PageContent, doc.Metadata["source"])
-		if err != nil {
-			fmt.Printf("Failed to index full document: %s\n", err)
+		// Index the full document content if IndexManager is set
+		if dm.IndexManager != nil {
+			docID := generateDocumentKey(doc)
+			err := dm.IndexManager.IndexFullDocument(docID, doc.PageContent, doc.Metadata["source"])
+			if err != nil {
+				fmt.Printf("Failed to index full document: %s\n", err)
+			}
 		}
-	}
+	}()
+	wg.Wait()
 }
 
 // IngestDocuments ingests multiple documents into the DocumentManager.
@@ -92,8 +99,18 @@ func (dm *DocumentManager) IngestDocuments(docs []Document) {
 
 // IngestGitRepo ingests a Git repository and processes documents.
 func (dm *DocumentManager) IngestGitRepo(repoPath, cloneURL, branch, privateKeyPath string, fileFilter func(string) bool, insecureSkipVerify bool) error {
-	gitLoader := NewGitLoader(repoPath, cloneURL, branch, privateKeyPath, fileFilter, insecureSkipVerify, dm, dm.IndexManager)
-	return gitLoader.Load()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		gitLoader := NewGitLoader(repoPath, cloneURL, branch, privateKeyPath, fileFilter, insecureSkipVerify, dm, dm.IndexManager)
+		err := gitLoader.Load()
+		if err != nil {
+			fmt.Printf("Failed to load Git repository: %s\n", err)
+		}
+	}()
+	wg.Wait()
+	return nil
 }
 
 // IngestPDF ingests a PDF file from a given path.

@@ -3,6 +3,7 @@ package documents
 import (
 	"errors"
 	"regexp"
+	"sync"
 )
 
 // RecursiveCharacterTextSplitter is a struct that represents a text splitter

@@ -1,6 +1,7 @@
 package documents
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -90,4 +91,35 @@ func TestSplitTextByCount(t *testing.T) {
 
 	result := SplitTextByCount(text, 8)
 	assert.Equal(t, expected, result, "The text should be split correctly by count.")
+}
+
+func TestSplitDocuments(t *testing.T) {
+	dm := NewDocumentManager(10, 0, nil)
+
+	doc1 := Document{
+		PageContent: "Hello\nWorld\n\nThis is a test\nof the text splitter.",
+		Metadata:    map[string]string{"source": "doc1"},
+	}
+	doc2 := Document{
+		PageContent: "Another document\nwith some text\nto split.",
+		Metadata:    map[string]string{"source": "doc2"},
+	}
+
+	dm.IngestDocuments([]Document{doc1, doc2})
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		splits, err := dm.SplitDocuments()
+		require.NoError(t, err, "Expected no error during document splitting")
+
+		expectedSplits := map[string][]string{
+			"doc1": {"Hello", "World", "This", "is", "a", "test", "of", "the", "text", "splitter."},
+			"doc2": {"Another", "document", "with", "some", "text", "to", "split."},
+		}
+
+		assert.Equal(t, expectedSplits, splits, "The documents should be split correctly")
+	}()
+	wg.Wait()
 }

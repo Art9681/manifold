@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	gogit "github.com/go-git/go-git/v5"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
@@ -71,6 +72,7 @@ func (gl *GitLoader) Load() error {
 	}
 
 	// Walk through the files in the repository and ingest them into DocumentManager
+	var wg sync.WaitGroup
 	err = filepath.Walk(gl.RepoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -89,39 +91,44 @@ func (gl *GitLoader) Load() error {
 			return nil
 		}
 
-		// Read file content
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Read file content
+			content, err := os.ReadFile(path)
+			if err != nil {
+				fmt.Printf("Error reading file %s: %s\n", path, err)
+				return
+			}
 
-		textContent := string(content)
-		relFilePath, _ := filepath.Rel(gl.RepoPath, path)
-		fileType := filepath.Ext(info.Name())
+			textContent := string(content)
+			relFilePath, _ := filepath.Rel(gl.RepoPath, path)
+			fileType := filepath.Ext(info.Name())
 
-		// Construct metadata
-		metadata := map[string]string{
-			"source":    relFilePath,
-			"file_path": relFilePath,
-			"file_name": info.Name(),
-			"file_type": fileType,
-		}
+			// Construct metadata
+			metadata := map[string]string{
+				"source":    relFilePath,
+				"file_path": relFilePath,
+				"file_name": info.Name(),
+				"file_type": fileType,
+			}
 
-		// Use DocumentManager's method to determine the language
-		language, err := getLanguageFromMetadata(metadata)
-		if err == nil {
-			metadata["language"] = string(language)
-		}
+			// Use DocumentManager's method to determine the language
+			language, err := getLanguageFromMetadata(metadata)
+			if err == nil {
+				metadata["language"] = string(language)
+			}
 
-		// Create Document and ingest it into DocumentManager
-		doc := Document{PageContent: textContent, Metadata: metadata}
-		gl.DocumentManager.IngestDocument(doc)
+			// Create Document and ingest it into DocumentManager
+			doc := Document{PageContent: textContent, Metadata: metadata}
+			gl.DocumentManager.IngestDocument(doc)
 
-		// Index the full document content before splitting
-		docID := metadata["file_path"]
-		if err := gl.IndexManager.IndexFullDocument(docID, textContent, relFilePath); err != nil {
-			return fmt.Errorf("failed to index full document %s: %w", docID, err)
-		}
+			// Index the full document content before splitting
+			docID := metadata["file_path"]
+			if err := gl.IndexManager.IndexFullDocument(docID, textContent, relFilePath); err != nil {
+				fmt.Printf("Failed to index full document %s: %s\n", docID, err)
+			}
+		}()
 
 		return nil
 	})
@@ -131,6 +138,7 @@ func (gl *GitLoader) Load() error {
 		return err
 	}
 
+	wg.Wait()
 	return nil
 }
 
