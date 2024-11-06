@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -117,24 +118,30 @@ func main() {
 	}
 
 	// Query and retrieve the stored embedding
-	var retrievedPhrase string
-	var retrievedEmbedding []byte
-	err = conn.QueryRowContext(context.Background(), `
-		SELECT phrase, embedding
-		FROM vectors
-		WHERE phrase = ?;
-	`, phrase).Scan(&retrievedPhrase, &retrievedEmbedding)
-	if err != nil {
-		log.Fatalf("Failed to query embedding: %v", err)
-	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		var retrievedPhrase string
+		var retrievedEmbedding []byte
+		err = conn.QueryRowContext(context.Background(), `
+			SELECT phrase, embedding
+			FROM vectors
+			WHERE phrase = ?;
+		`, phrase).Scan(&retrievedPhrase, &retrievedEmbedding)
+		if err != nil {
+			log.Fatalf("Failed to query embedding: %v", err)
+		}
 
-	// Convert the retrieved embedding back to a float64 slice
-	retrievedEmbeddingFloats := make([]float64, len(retrievedEmbedding)/8)
-	for i := 0; i < len(retrievedEmbeddingFloats); i++ {
-		retrievedEmbeddingFloats[i] = math.Float64frombits(binary.LittleEndian.Uint64(retrievedEmbedding[i*8:]))
-	}
+		// Convert the retrieved embedding back to a float64 slice
+		retrievedEmbeddingFloats := make([]float64, len(retrievedEmbedding)/8)
+		for i := 0; i < len(retrievedEmbeddingFloats); i++ {
+			retrievedEmbeddingFloats[i] = math.Float64frombits(binary.LittleEndian.Uint64(retrievedEmbedding[i*8:]))
+		}
 
-	// Log the retrieved phrase and embedding
-	log.Printf("Phrase: %s\n", retrievedPhrase)
-	log.Printf("Retrieved Embedding: %v\n", retrievedEmbeddingFloats)
+		// Log the retrieved phrase and embedding
+		log.Printf("Phrase: %s\n", retrievedPhrase)
+		log.Printf("Retrieved Embedding: %v\n", retrievedEmbeddingFloats)
+	}()
+	wg.Wait()
 }

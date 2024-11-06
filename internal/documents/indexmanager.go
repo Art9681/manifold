@@ -3,6 +3,7 @@ package documents
 import (
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/blevesearch/bleve/v2"
 	index "github.com/blevesearch/bleve_index_api"
@@ -36,10 +37,15 @@ func (im *IndexManager) IndexFullDocument(docID, content, filePath string) error
 		"file_path":    filePath,
 	}
 
-	if err := im.Index.Index(docID, doc); err != nil {
-		log.Printf("Error indexing full document: %v", err)
-		return err
-	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := im.Index.Index(docID, doc); err != nil {
+			log.Printf("Error indexing full document: %v", err)
+		}
+	}()
+	wg.Wait()
 	return nil
 }
 
@@ -50,10 +56,15 @@ func (im *IndexManager) IndexDocumentChunk(docID, chunk, filePath string) error 
 		"file_path": filePath,
 	}
 
-	if err := im.Index.Index(docID, doc); err != nil {
-		log.Printf("Error indexing document chunk: %v", err)
-		return err
-	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := im.Index.Index(docID, doc); err != nil {
+			log.Printf("Error indexing document chunk: %v", err)
+		}
+	}()
+	wg.Wait()
 	return nil
 }
 

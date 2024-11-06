@@ -154,9 +154,10 @@ func WebGetHandler(address string) (string, error) {
 
 	text = removeEmptyRows(text)
 
-	//pterm.Info.Println("Document:", text)
+	// Append the source URL to the fetched content
+	result := fmt.Sprintf("Source: %s\n\n%s", address, text)
 
-	return text, nil
+	return result, nil
 }
 
 func ExtractURLs(input string) []string {
@@ -278,12 +279,13 @@ func GetSearchResults(urls []string) string {
 	for _, url := range urls {
 		res, err := WebGetHandler(url)
 		if err != nil {
-			pterm.Error.Printf("Error getting search result: %v", err)
+			pterm.Error.Printf("Error getting search result for URL %s: %v", url, err)
 			continue
 		}
 
 		if res != "" {
-			resultHTML += res
+			// Append the URL and the content
+			resultHTML += fmt.Sprintf("Source: %s\n\n%s\n\n", url, res)
 		}
 	}
 
