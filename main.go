@@ -198,7 +198,7 @@ func main() {
 		if config.GoogleAPIKey == "" {
 			log.Fatal("Google API key is not set in config")
 		}
-		llmClient = NewLocalLLMClient("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-1.5-flash", config.OpenAIAPIKey)
+		llmClient = NewLocalLLMClient("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.0-flash-exp", config.GoogleAPIKey)
 
 	default:
 		log.Fatal("Invalid LLMBackend specified in config")
@@ -315,7 +315,7 @@ func restartCompletionsService(config *Config, verbose bool) {
 		if config.GoogleAPIKey == "" {
 			log.Fatal("Google API key is not set in config")
 		}
-		llmClient = NewLocalLLMClient("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-1.5-flash", config.OpenAIAPIKey)
+		llmClient = NewLocalLLMClient("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.0-flash-exp", config.GoogleAPIKey)
 
 	default:
 		log.Fatal("Invalid LLMBackend specified in config")

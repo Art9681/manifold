@@ -76,8 +76,8 @@ func handleWebSocketConnection(c echo.Context) error {
 			Model:       modelPath,
 			Messages:    cpt.FormatMessages(nil),
 			Temperature: 0.3,
-			MaxTokens:   1000,
-			Stream:      true,
+			//MaxTokens:   8193,
+			Stream: true,
 		}
 		// Clear the response buffer
 		responseBuffer.Reset()

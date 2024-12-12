@@ -192,8 +192,8 @@ func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.R
 	if client.BaseURL == "https://generativelanguage.googleapis.com/v1beta/openai" {
 		// Print the client base url
 		fmt.Println(client.BaseURL)
-		payload.Model = "gemini-1.5-flash"
-		payload.MaxTokens = 2000000
+		payload.Model = "gemini-2.0-flash-exp"
+		//payload.MaxTokens = 8193
 	}
 
 	// Convert the payload to JSON
