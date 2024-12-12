@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -186,14 +187,13 @@ func (client *Client) SendCompletionRequest(payload *CompletionRequest) (*http.R
 		// Print the client base url
 		fmt.Println(client.BaseURL)
 		payload.Model = "chatgpt-4o-latest"
+	}
 
-		// Create a new CompletionRequest without the MaxTokens field
-		payload = &CompletionRequest{
-			Model:       payload.Model,
-			Messages:    payload.Messages,
-			Temperature: payload.Temperature,
-			Stream:      payload.Stream,
-		}
+	if client.BaseURL == "https://generativelanguage.googleapis.com/v1beta/openai" {
+		// Print the client base url
+		fmt.Println(client.BaseURL)
+		payload.Model = "gemini-1.5-flash"
+		payload.MaxTokens = 2000000
 	}
 
 	// Convert the payload to JSON
@@ -245,9 +245,22 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 	}
 	defer resp.Body.Close()
 
+	// Log the entire response body for debugging
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Error reading response body: %v", err)
+		return err
+	}
+	log.Printf("Full response body:\n%s\n", string(bodyBytes))
+
+	// Reset resp.Body so that it can be read again by the scanner.
+	resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		log.Printf("Raw API Line: %s", line)
 
 		if strings.HasPrefix(line, "data: ") {
 			jsonStr := line[6:] // Strip the "data: " prefix
@@ -271,28 +284,32 @@ func StreamCompletionToWebSocket(c *websocket.Conn, llmClient LLMClient, chatID 
 			}
 
 			for _, choice := range data.Choices {
-				// If the finish reason is "stop", then stop streaming
-				if choice.FinishReason == "stop" {
-					err := SaveChatTurn(userPrompt, responseBuffer.String(), timestamp)
-					if err != nil {
-						log.Printf("Error saving chat turn: %v", err)
-					}
+				responseBuffer.WriteString(choice.Delta.Content)
 
-					// Clear all buffers and prompts
-					responseBuffer.Reset()
+				htmlMsg := web.MarkdownToHTML(responseBuffer.Bytes())
+				turnIDStr := fmt.Sprint(chatID + TurnCounter)
+				formattedContent := fmt.Sprintf("<div id='response-content-%s' class='mx-1' hx-trigger='load'>%s</div>\n<codapi-snippet engine='browser' sandbox='javascript' editor='basic'></codapi-snippet>", turnIDStr, htmlMsg)
 
-					return fmt.Errorf("%s", responseBuffer.String())
+				if err := c.WriteMessage(websocket.TextMessage, []byte(formattedContent)); err != nil {
+					return err
 				}
 
-				responseBuffer.WriteString(choice.Delta.Content)
-			}
+				// Handle different finish reasons
+				if choice.FinishReason != "" {
+					log.Printf("Finish reason: %s", choice.FinishReason)
 
-			htmlMsg := web.MarkdownToHTML(responseBuffer.Bytes())
-			turnIDStr := fmt.Sprint(chatID + TurnCounter)
-			formattedContent := fmt.Sprintf("<div id='response-content-%s' class='mx-1' hx-trigger='load'>%s</div>\n<codapi-snippet engine='browser' sandbox='javascript' editor='basic'></codapi-snippet>", turnIDStr, htmlMsg)
-
-			if err := c.WriteMessage(websocket.TextMessage, []byte(formattedContent)); err != nil {
-				return err
+					if choice.FinishReason == "stop" {
+						// Normal completion, do nothing special here
+						return nil
+					} else if choice.FinishReason == "length" {
+						// Reached token limit
+						log.Println("Response truncated due to length limit.")
+						return nil // Treat as normal completion
+					} else {
+						// Other finish reasons (e.g., content_filter)
+						return fmt.Errorf("Unexpected finish reason: %s", choice.FinishReason)
+					}
+				}
 			}
 		}
 	}

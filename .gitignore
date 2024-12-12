@@ -12,3 +12,5 @@ cmd/repoconcat/manifold.txt
 cmd/repoconcat/README.md
 refactor_notes.md
 cmd/reporag/codebase.json
+venv
+cmd/repoconcat/README.md

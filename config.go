@@ -26,6 +26,7 @@ type ToolConfig struct {
 
 type Config struct {
 	OpenAIAPIKey   string            `yaml:"openai_api_key,omitempty"`
+	GoogleAPIKey   string            `yaml:"google_api_key,omitempty"`
 	DataPath       string            `yaml:"data_path"`
 	LLMBackend     string            `yaml:"llm_backend"`
 	Services       []ServiceConfig   `yaml:"services"`
