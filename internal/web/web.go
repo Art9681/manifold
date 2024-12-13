@@ -3,25 +3,26 @@ package web
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"os"
-	"regexp"
 
-	"github.com/PuerkitoBio/goquery"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 	"github.com/go-shiori/go-readability"
+	"github.com/gomarkdown/markdown"
+	"github.com/gomarkdown/markdown/html"
+	"github.com/gomarkdown/markdown/parser"
 	"github.com/pterm/pterm"
-	"golang.org/x/net/html"
+	nethtml "golang.org/x/net/html"
 )
 
 var (
@@ -89,9 +90,10 @@ func checkRobotsTxt(ctx context.Context, u string) bool {
 	return true
 }
 
+// WebGetHandler fetches the content of a webpage, extracts the main content, and returns it as Markdown.
 func WebGetHandler(address string) (string, error) {
 	if !checkRobotsTxt(context.Background(), address) {
-		return "", errors.New("scraping not allowed according to robots.txt")
+		return "", fmt.Errorf("scraping not allowed according to robots.txt for %s", address)
 	}
 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
@@ -127,37 +129,45 @@ func WebGetHandler(address string) (string, error) {
 	)
 
 	if err != nil {
-		log.Println("Error retrieving page:", err)
-		return "", err
+		return "", fmt.Errorf("error retrieving page %s: %w", address, err)
 	}
 
 	// Convert url to url.URL
 	getUrl, err := url.Parse(address)
 	if err != nil {
-		log.Println("Error parsing URL:", err)
-		return "", err
+		return "", fmt.Errorf("error parsing URL %s: %w", address, err)
 	}
 
 	article, err := readability.FromReader(strings.NewReader(docs), getUrl)
 	if err != nil {
-		log.Println("Error parsing reader view:", err)
-		return "", err
+		return "", fmt.Errorf("error parsing reader view for %s: %w", address, err)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(article.Content))
+	// Convert to Markdown
+	markdownContent, err := htmlToMarkdown(article.Content)
 	if err != nil {
-		log.Println("Error parsing document:", err)
-		return "", err
+		return "", fmt.Errorf("error converting HTML to Markdown for %s: %w", address, err)
 	}
-
-	text := doc.Find("body").Text()
-
-	text = removeEmptyRows(text)
 
 	// Append the source URL to the fetched content
-	result := fmt.Sprintf("Source: %s\n\n%s", address, text)
+	result := fmt.Sprintf("Source: %s\n\n%s", address, markdownContent)
 
 	return result, nil
+}
+
+// htmlToMarkdown converts HTML content to Markdown.
+func htmlToMarkdown(htmlContent string) (string, error) {
+	// Configure the Markdown parser
+	extensions := parser.CommonExtensions | parser.AutoHeadingIDs | parser.NoEmptyLineBeforeBlock
+	p := parser.NewWithExtensions(extensions)
+
+	// Configure HTML renderer options
+	htmlFlags := html.CommonFlags | html.HrefTargetBlank
+	renderer := html.NewRenderer(html.RendererOptions{Flags: htmlFlags})
+
+	md := markdown.ToHTML([]byte(htmlContent), p, renderer)
+
+	return string(md), nil
 }
 
 func ExtractURLs(input string) []string {
@@ -274,22 +284,18 @@ func SearchDDG(query string) []string {
 }
 
 func GetSearchResults(urls []string) string {
-	var resultHTML string
-
+	var resultMarkdown string
 	for _, url := range urls {
 		res, err := WebGetHandler(url)
 		if err != nil {
 			pterm.Error.Printf("Error getting search result for URL %s: %v", url, err)
 			continue
 		}
-
 		if res != "" {
-			// Append the URL and the content
-			resultHTML += fmt.Sprintf("Source: %s\n\n%s\n\n", url, res)
+			resultMarkdown += res + "\n\n" // Append to resultMarkdown with added newlines
 		}
 	}
-
-	return resultHTML
+	return resultMarkdown
 }
 
 func RemoveUnwantedURLs(urls []string) []string {
@@ -368,13 +374,12 @@ func RemoveUrls(input string) string {
 func removeEmptyRows(input string) string {
 	lines := strings.Split(input, "\n")
 	var filteredLines []string
-
 	for _, line := range lines {
-		if strings.TrimSpace(line) != "" {
-			filteredLines = append(filteredLines, line)
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine != "" {
+			filteredLines = append(filteredLines, trimmedLine)
 		}
 	}
-
 	return strings.Join(filteredLines, "\n")
 }
 
@@ -418,15 +423,15 @@ func postRequest(endpoint string, queryParam string) (string, error) {
 
 // extractURLs parses the HTML response and extracts the URLs from the search results.
 func extractURLs(htmlContent string) ([]string, error) {
-	doc, err := html.Parse(strings.NewReader(htmlContent))
+	doc, err := nethtml.Parse(strings.NewReader(htmlContent))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse HTML: %w", err)
 	}
 
 	var urls []string
-	var f func(*html.Node)
-	f = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "a" {
+	var f func(*nethtml.Node)
+	f = func(n *nethtml.Node) {
+		if n.Type == nethtml.ElementNode && n.Data == "a" {
 			for _, attr := range n.Attr {
 				if attr.Key == "href" && strings.Contains(attr.Val, "http") {
 					urls = append(urls, attr.Val)
